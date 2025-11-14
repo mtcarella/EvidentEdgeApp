@@ -1,6 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { LogIn } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION = 15 * 60 * 1000;
 
 export function LoginForm() {
   const [isLogin, setIsLogin] = useState(true);
@@ -10,7 +14,58 @@ export function LoginForm() {
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isLockedOut, setIsLockedOut] = useState(false);
+  const [lockoutTimeRemaining, setLockoutTimeRemaining] = useState(0);
   const { signIn, signUp } = useAuth();
+
+  useEffect(() => {
+    if (isLockedOut && lockoutTimeRemaining > 0) {
+      const timer = setInterval(() => {
+        setLockoutTimeRemaining(prev => {
+          if (prev <= 1000) {
+            setIsLockedOut(false);
+            return 0;
+          }
+          return prev - 1000;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isLockedOut, lockoutTimeRemaining]);
+
+  const checkRateLimit = async (email: string): Promise<boolean> => {
+    const fifteenMinutesAgo = new Date(Date.now() - LOCKOUT_DURATION);
+
+    const { data: recentAttempts } = await supabase
+      .from('login_attempts')
+      .select('*')
+      .eq('email', email)
+      .eq('successful', false)
+      .gte('attempt_time', fifteenMinutesAgo.toISOString())
+      .order('attempt_time', { ascending: false });
+
+    if (recentAttempts && recentAttempts.length >= MAX_LOGIN_ATTEMPTS) {
+      const oldestAttempt = recentAttempts[recentAttempts.length - 1];
+      const lockoutEndTime = new Date(oldestAttempt.attempt_time).getTime() + LOCKOUT_DURATION;
+      const timeRemaining = lockoutEndTime - Date.now();
+
+      if (timeRemaining > 0) {
+        setIsLockedOut(true);
+        setLockoutTimeRemaining(timeRemaining);
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const logLoginAttempt = async (email: string, successful: boolean) => {
+    await supabase.from('login_attempts').insert({
+      email,
+      attempt_time: new Date().toISOString(),
+      successful,
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,8 +74,20 @@ export function LoginForm() {
 
     try {
       if (isLogin) {
+        const canAttempt = await checkRateLimit(email);
+        if (!canAttempt) {
+          const minutes = Math.ceil(lockoutTimeRemaining / 60000);
+          setError(`Too many failed login attempts. Please try again in ${minutes} minute${minutes > 1 ? 's' : ''}.`);
+          setLoading(false);
+          return;
+        }
+
         const { error } = await signIn(email, password);
-        if (error) throw error;
+        if (error) {
+          await logLoginAttempt(email, false);
+          throw error;
+        }
+        await logLoginAttempt(email, true);
       } else {
         if (!name) {
           setError('Name is required for registration');
@@ -134,10 +201,10 @@ export function LoginForm() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || isLockedOut}
               className="w-full bg-[#adce60] hover:bg-[#9bbf50] text-[#3c4f54] font-bold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
             >
-              {loading ? 'Please wait...' : isLogin ? 'Sign In' : 'Sign Up'}
+              {loading ? 'Please wait...' : isLockedOut ? `Locked (${Math.ceil(lockoutTimeRemaining / 60000)}m)` : isLogin ? 'Sign In' : 'Sign Up'}
             </button>
           </form>
 

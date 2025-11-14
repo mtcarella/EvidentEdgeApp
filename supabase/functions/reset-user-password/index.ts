@@ -15,17 +15,9 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    console.log('=== Starting password reset function ===');
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-
-    console.log('Environment check:', {
-      hasUrl: !!supabaseUrl,
-      hasServiceKey: !!serviceRoleKey,
-      hasAnonKey: !!anonKey
-    });
 
     const supabaseAdmin = createClient(
       supabaseUrl ?? '',
@@ -54,18 +46,14 @@ Deno.serve(async (req: Request) => {
       }
     );
 
-    console.log('Getting user from token...');
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(token);
     if (userError) {
-      console.error('Error getting user:', userError);
       throw new Error(`Failed to get user: ${userError.message}`);
     }
     if (!user) {
       throw new Error('Unauthorized - no user found');
     }
-    console.log('User found:', user.id);
 
-    console.log('Checking admin role...');
     const { data: adminCheck, error: roleError } = await supabaseAdmin
       .from('sales_people')
       .select('role')
@@ -73,11 +61,8 @@ Deno.serve(async (req: Request) => {
       .single();
 
     if (roleError) {
-      console.error('Error checking role:', roleError);
       throw new Error(`Failed to check role: ${roleError.message}`);
     }
-
-    console.log('Role check result:', adminCheck);
 
     if (!adminCheck || adminCheck.role !== 'admin') {
       throw new Error('Only admins can reset passwords');
@@ -92,27 +77,18 @@ Deno.serve(async (req: Request) => {
       throw new Error('Password must be at least 6 characters');
     }
 
-    console.log('Attempting to update password for user:', userId);
-    console.log('New password length:', newPassword.length);
-
-    // Update the password using admin API
     const { data: updateData, error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
       userId,
       { password: newPassword }
     );
 
-    console.log('Update result:', JSON.stringify({ data: updateData, error: updateError }, null, 2));
-
     if (updateError) {
-      console.error('Update error details:', JSON.stringify(updateError, null, 2));
       throw new Error(`Failed to update password: ${updateError.message || JSON.stringify(updateError)}`);
     }
 
     if (!updateData?.user) {
       throw new Error('No user data returned from update');
     }
-    
-    console.log('Password successfully updated for user:', updateData.user.id);
 
     return new Response(
       JSON.stringify({

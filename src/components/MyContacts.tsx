@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { ContactView } from './ContactView';
 import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
+import * as XLSX from 'xlsx';
 
 interface Contact {
   id: string;
@@ -176,35 +177,25 @@ export function MyContacts() {
         return;
       }
 
-      const headers = ['Name', 'Type', 'Email', 'Phone', 'Company', 'Branch', 'Address', 'Birthday', 'Drinks', 'Notes', 'Created At'];
-      let csvContent = headers.join(',') + '\n';
+      const worksheetData = data.map((contact: any) => ({
+        'Name': contact.name || '',
+        'Type': contact.type || '',
+        'Email': contact.email || '',
+        'Phone': contact.phone || '',
+        'Company': contact.company || '',
+        'Branch': contact.branch || '',
+        'Address': contact.address || '',
+        'Birthday': contact.birthday ? new Date(contact.birthday).toLocaleDateString('en-US') : '',
+        'Drinks': contact.drinks ? 'Yes' : 'No',
+        'Notes': contact.notes || '',
+        'Created At': new Date(contact.created_at).toLocaleString(),
+      }));
 
-      data.forEach((contact: any) => {
-        const row = [
-          `"${(contact.name || '').replace(/"/g, '""')}"`,
-          `"${(contact.type || '').replace(/"/g, '""')}"`,
-          `"${(contact.email || '').replace(/"/g, '""')}"`,
-          `"${(contact.phone || '').replace(/"/g, '""')}"`,
-          `"${(contact.company || '').replace(/"/g, '""')}"`,
-          `"${(contact.branch || '').replace(/"/g, '""')}"`,
-          `"${(contact.address || '').replace(/"/g, '""')}"`,
-          `"${contact.birthday ? new Date(contact.birthday).toLocaleDateString('en-US') : ''}"`,
-          `"${contact.drinks ? 'Yes' : 'No'}"`,
-          `"${(contact.notes || '').replace(/"/g, '""')}"`,
-          `"${new Date(contact.created_at).toLocaleString()}"`,
-        ];
-        csvContent += row.join(',') + '\n';
-      });
+      const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'My Contacts');
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `my_contacts_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      XLSX.writeFile(workbook, `my_contacts_${new Date().toISOString().split('T')[0]}.xlsx`);
     } catch (error) {
       console.error('Error exporting contacts:', error);
       alert('Failed to export contacts');

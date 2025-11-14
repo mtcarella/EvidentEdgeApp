@@ -75,6 +75,7 @@ export function VerifyWires() {
   const [allWires, setAllWires] = useState<VerifiedWire[]>([]);
   const [editingWire, setEditingWire] = useState<VerifiedWire | null>(null);
   const [editFormData, setEditFormData] = useState<VerifiedWire | null>(null);
+  const [logsRefreshTrigger, setLogsRefreshTrigger] = useState(0);
 
   useEffect(() => {
     if (viewMode === 'logs' && (userProfile?.role === 'admin' || userProfile?.role === 'super_admin')) {
@@ -83,7 +84,7 @@ export function VerifyWires() {
     if (viewMode === 'manage' && userProfile?.role === 'super_admin') {
       loadAllWires();
     }
-  }, [viewMode, userProfile, logsLimit, logsSearchDate, logsSearchFileNumber]);
+  }, [viewMode, userProfile, logsLimit, logsSearchDate, logsSearchFileNumber, logsRefreshTrigger]);
 
   const loadLogs = async () => {
     setLoading(true);
@@ -134,7 +135,6 @@ export function VerifyWires() {
         setLogs(enrichedLogs);
       }
     } catch (error) {
-      console.error('Error loading logs:', error);
     } finally {
       setLoading(false);
     }
@@ -180,11 +180,6 @@ export function VerifyWires() {
     setSearchPerformed(false);
 
     try {
-      console.log('Searching for:', {
-        routing_number: routingNumber.trim(),
-        account_number: accountNumber.trim()
-      });
-
       const { data: matches, error } = await supabase
         .from('verified_wires')
         .select('*')
@@ -195,12 +190,10 @@ export function VerifyWires() {
 
       const match = matches && matches.length > 0 ? matches[0] : null;
 
-      console.log('Search result:', { match, error });
-
       setSearchResult(match || null);
       setSearchPerformed(true);
 
-      await supabase.from('wire_verification_logs').insert({
+      const { error: logError } = await supabase.from('wire_verification_logs').insert({
         routing_number: routingNumber.trim(),
         account_number: accountNumber.trim(),
         file_number: fileNumber.trim(),
@@ -217,8 +210,11 @@ export function VerifyWires() {
         borrower_name: borrowerName.trim() || null,
         buyer_name: buyerName.trim() || null,
       });
+
+      if (!logError) {
+        setLogsRefreshTrigger(prev => prev + 1);
+      }
     } catch (error) {
-      console.error('Error searching:', error);
       alert('An error occurred during search');
     } finally {
       setLoading(false);
@@ -408,7 +404,6 @@ TRANSFER INFORMATION
       });
 
       if (error) {
-        console.error('Error adding wire:', error);
         alert('Failed to add verified wire');
       } else {
         alert('Verified wire added successfully');
@@ -422,7 +417,6 @@ TRANSFER INFORMATION
         });
       }
     } catch (error) {
-      console.error('Error:', error);
       alert('An error occurred');
     } finally {
       setLoading(false);
@@ -457,7 +451,6 @@ TRANSFER INFORMATION
         setAllWires(data);
       }
     } catch (error) {
-      console.error('Error loading wires:', error);
     } finally {
       setLoading(false);
     }
@@ -496,7 +489,6 @@ TRANSFER INFORMATION
         .eq('id', editingWire.id);
 
       if (error) {
-        console.error('Error updating wire:', error);
         alert('Failed to update verified wire');
       } else {
         alert('Verified wire updated successfully');
@@ -504,7 +496,6 @@ TRANSFER INFORMATION
         loadAllWires();
       }
     } catch (error) {
-      console.error('Error:', error);
       alert('An error occurred');
     } finally {
       setLoading(false);
@@ -524,14 +515,12 @@ TRANSFER INFORMATION
         .eq('id', wireId);
 
       if (error) {
-        console.error('Error deleting wire:', error);
         alert('Failed to delete verified wire');
       } else {
         alert('Verified wire deleted successfully');
         loadAllWires();
       }
     } catch (error) {
-      console.error('Error:', error);
       alert('An error occurred');
     } finally {
       setLoading(false);
@@ -570,7 +559,10 @@ TRANSFER INFORMATION
           </button>
           {(userProfile?.role === 'admin' || userProfile?.role === 'super_admin') && (
             <button
-              onClick={() => setViewMode('logs')}
+              onClick={() => {
+                setViewMode('logs');
+                setLogsRefreshTrigger(prev => prev + 1);
+              }}
               className={`px-4 py-2 rounded-lg transition-colors ${
                 viewMode === 'logs'
                   ? 'bg-blue-600 text-white'

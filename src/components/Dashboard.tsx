@@ -30,7 +30,6 @@ export function Dashboard() {
 
   const salespersonTabs = [
     ...commonTabs,
-    { id: 'import' as Tab, label: 'Import Data', icon: Upload },
   ];
 
   const processorTabs = [
@@ -115,7 +114,7 @@ export function Dashboard() {
         {activeTab === 'search' && isAdminOrProcessor && <ContactSearch />}
         {activeTab === 'conflict' && <ConflictCheck />}
         {activeTab === 'add' && isAdmin && <AddProspect />}
-        {activeTab === 'import' && <ImportData />}
+        {activeTab === 'import' && isAdminOrProcessor && <ImportData />}
         {activeTab === 'verify' && isAdminOrProcessor && <VerifyWires />}
         {activeTab === 'audit' && isAdmin && <AuditLog />}
         {activeTab === 'admin' && isAdmin && <AdminPanel />}

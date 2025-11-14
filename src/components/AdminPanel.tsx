@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { ContactView } from './ContactView';
+import * as XLSX from 'xlsx';
 
 interface Contact {
   id: string;
@@ -649,7 +650,6 @@ export function AdminPanel() {
 
   const exportToCSV = async () => {
     try {
-      let csvContent = '';
       let filename = '';
 
       if (viewMode === 'contacts') {
@@ -688,33 +688,34 @@ export function AdminPanel() {
           meetingsByContact.get(contactId)?.push(meeting);
         });
 
-        const headers = ['Name', 'Type', 'Email', 'Phone', 'Company', 'Branch', 'Address', 'Paralegal', 'Assigned To', 'Notes', 'Meetings', 'Created At'];
-        csvContent = headers.join(',') + '\n';
-
-        contacts.forEach((contact: any) => {
+        const worksheetData = contacts.map((contact: any) => {
           const contactMeetings = meetingsByContact.get(contact.id) || [];
           const meetingsText = contactMeetings
             .map(m => `${m.meeting_date}: ${m.notes}`)
             .join(' | ');
 
-          const row = [
-            `"${(contact.name || '').replace(/"/g, '""')}"`,
-            `"${(contact.type || '').replace(/"/g, '""')}"`,
-            `"${(contact.email || '').replace(/"/g, '""')}"`,
-            `"${(contact.phone || '').replace(/"/g, '""')}"`,
-            `"${(contact.company || '').replace(/"/g, '""')}"`,
-            `"${(contact.branch || '').replace(/"/g, '""')}"`,
-            `"${(contact.address || '').replace(/"/g, '""')}"`,
-            `"${(contact.paralegal || '').replace(/"/g, '""')}"`,
-            `"${(contact.assignments?.[0]?.sales_person?.name || 'Unassigned').replace(/"/g, '""')}"`,
-            `"${(contact.notes || '').replace(/"/g, '""')}"`,
-            `"${meetingsText.replace(/"/g, '""')}"`,
-            `"${new Date(contact.created_at).toLocaleString()}"`,
-          ];
-          csvContent += row.join(',') + '\n';
+          return {
+            'Name': contact.name || '',
+            'Type': contact.type || '',
+            'Email': contact.email || '',
+            'Phone': contact.phone || '',
+            'Company': contact.company || '',
+            'Branch': contact.branch || '',
+            'Address': contact.address || '',
+            'Paralegal': contact.paralegal || '',
+            'Assigned To': contact.assignments?.[0]?.sales_person?.name || 'Unassigned',
+            'Notes': contact.notes || '',
+            'Meetings': meetingsText,
+            'Created At': new Date(contact.created_at).toLocaleString(),
+          };
         });
 
-        filename = `contacts_export_${new Date().toISOString().split('T')[0]}.csv`;
+        const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Contacts');
+
+        filename = `contacts_export_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(workbook, filename);
         setLoading(false);
       } else if (viewMode === 'salespeople') {
         const { data } = await supabase
@@ -727,32 +728,21 @@ export function AdminPanel() {
           return;
         }
 
-        const headers = ['Name', 'Email', 'Role', 'Active', 'Created At'];
-        csvContent = headers.join(',') + '\n';
+        const worksheetData = data.map((person: any) => ({
+          'Name': person.name || '',
+          'Email': person.email || '',
+          'Role': person.role || '',
+          'Active': person.is_active ? 'Yes' : 'No',
+          'Created At': new Date(person.created_at).toLocaleString(),
+        }));
 
-        data.forEach((person: any) => {
-          const row = [
-            `"${person.name || ''}"`,
-            `"${person.email || ''}"`,
-            `"${person.role || ''}"`,
-            `"${person.is_active ? 'Yes' : 'No'}"`,
-            `"${new Date(person.created_at).toLocaleString()}"`,
-          ];
-          csvContent += row.join(',') + '\n';
-        });
+        const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Salespeople');
 
-        filename = `salespeople_${new Date().toISOString().split('T')[0]}.csv`;
+        filename = `salespeople_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(workbook, filename);
       }
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', filename);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
     } catch (error) {
       console.error('Error exporting CSV:', error);
       alert('Error exporting data');
@@ -802,7 +792,7 @@ export function AdminPanel() {
           className="ml-auto px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
         >
           <Download className="w-4 h-4" />
-          Export CSV
+          Export Excel
         </button>
         <button
           onClick={loadData}

@@ -43,11 +43,11 @@ Deno.serve(async (req: Request) => {
 
     const { data: adminCheck } = await supabaseAdmin
       .from('sales_people')
-      .select('role')
+      .select('role, is_super_admin')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (!adminCheck || adminCheck.role !== 'admin') {
+    if (!adminCheck || (adminCheck.role !== 'admin' && adminCheck.role !== 'super_admin' && !adminCheck.is_super_admin)) {
       throw new Error('Only admins can delete users');
     }
 

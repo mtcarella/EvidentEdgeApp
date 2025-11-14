@@ -24,10 +24,13 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [salesPerson, setSalesPerson] = useState<SalesPerson | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastActivity, setLastActivity] = useState(Date.now());
 
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
@@ -38,6 +41,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setSalesPerson(data);
   };
+
+  const updateLastActivity = () => {
+    setLastActivity(Date.now());
+  };
+
+  useEffect(() => {
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    events.forEach(event => {
+      document.addEventListener(event, updateLastActivity);
+    });
+
+    return () => {
+      events.forEach(event => {
+        document.removeEventListener(event, updateLastActivity);
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const checkInactivity = setInterval(() => {
+      const timeSinceLastActivity = Date.now() - lastActivity;
+      if (timeSinceLastActivity >= INACTIVITY_TIMEOUT) {
+        signOut();
+        alert('You have been logged out due to inactivity.');
+      }
+    }, 60000);
+
+    return () => clearInterval(checkInactivity);
+  }, [user, lastActivity]);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
