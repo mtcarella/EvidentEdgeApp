@@ -1,0 +1,58 @@
+#!/bin/bash
+
+echo "========================================"
+echo "  Sync with GitHub (First Time)"
+echo "========================================"
+echo ""
+echo "This script will:"
+echo "  1. Pull any existing files from GitHub"
+echo "  2. Merge them with your local files"
+echo "  3. Push everything to GitHub"
+echo ""
+read -p "Press Enter to continue..."
+
+echo ""
+echo "Fetching remote changes..."
+git fetch origin main
+
+echo ""
+echo "Merging remote changes (allowing unrelated histories)..."
+if ! git pull origin main --allow-unrelated-histories --no-rebase; then
+    echo ""
+    echo "========================================"
+    echo "  Merge Conflict Detected"
+    echo "========================================"
+    echo ""
+    echo "Please resolve the conflicts manually, then run:"
+    echo "  git add ."
+    echo "  git commit -m 'Merge remote changes'"
+    echo "  git push origin main"
+    echo ""
+    read -p "Press Enter to exit..."
+    exit 1
+fi
+
+echo ""
+echo "Pushing all changes to GitHub..."
+if ! git push origin main; then
+    echo ""
+    echo "========================================"
+    echo "  X Push still failed!"
+    echo "========================================"
+    echo ""
+    echo "Please check your authentication."
+    read -p "Press Enter to exit..."
+    exit 1
+fi
+
+echo ""
+echo "========================================"
+echo "  ✓ Successfully Synced with GitHub!"
+echo "========================================"
+echo ""
+echo "Your local and remote repositories are now in sync."
+echo ""
+echo "For future deployments, use:"
+echo "  ./deploy.sh"
+echo ""
+read -p "Press Enter to exit..."
