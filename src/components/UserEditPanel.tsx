@@ -1,0 +1,421 @@
+import { useState, useEffect } from 'react';
+import { Save, X, CheckSquare, Square, Shield, RefreshCw, Key } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+
+interface SalesPerson {
+  id: string;
+  user_id: string | null;
+  name: string;
+  email: string;
+  role: string;
+  is_active: boolean;
+  birthday?: string | null;
+  requires_daily_reports?: boolean;
+  requires_weekly_reports?: boolean;
+}
+
+interface UserEditPanelProps {
+  user: SalesPerson;
+  onSave: () => void;
+  onCancel: () => void;
+}
+
+const AVAILABLE_MODULES = [
+  { name: 'dashboard', label: 'Dashboard', description: 'Main dashboard view' },
+  { name: 'add_prospect', label: 'Add Prospect', description: 'Add new prospects' },
+  { name: 'my_contacts', label: 'My Contacts', description: 'View own contacts' },
+  { name: 'contact_search', label: 'Contact Search', description: 'Search all contacts' },
+  { name: 'incoming_wires', label: 'Incoming Wires', description: 'View incoming wires' },
+  { name: 'verify_wires', label: 'Verify Wires', description: 'Verify wire transactions' },
+  { name: 'closer_submissions', label: 'Submit Rewards', description: 'Submit rewards for closings' },
+  { name: 'closer_rewards_report', label: 'Closer Rewards Report', description: 'View rewards report' },
+  { name: 'submit_performance_report', label: 'Submit Performance Report', description: 'Submit performance reports' },
+  { name: 'weekly_reports', label: 'View Performance Reports', description: 'View performance reports' },
+  { name: 'meeting_logs_report', label: 'Meeting Logs Report', description: 'View meeting logs' },
+  { name: 'admin_panel', label: 'Admin Panel', description: 'Database management' },
+  { name: 'audit_log', label: 'Audit Log', description: 'View audit logs' },
+  { name: 'import_data', label: 'Import Data', description: 'Import contact data' },
+  { name: 'resources', label: 'Resources', description: 'View company resources' },
+  { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
+];
+
+export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
+  const [editForm, setEditForm] = useState({
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    is_active: user.is_active,
+    birthday: user.birthday || '',
+    requires_daily_reports: user.requires_daily_reports || false,
+    requires_weekly_reports: user.requires_weekly_reports || false,
+  });
+  const [permissions, setPermissions] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [passwordResetMessage, setPasswordResetMessage] = useState('');
+
+  useEffect(() => {
+    loadPermissions();
+  }, [user.id]);
+
+  const loadPermissions = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('user_module_permissions')
+        .select('module_name, has_access')
+        .eq('user_id', user.id);
+
+      if (error) throw error;
+
+      const userPermissions = new Set<string>();
+      data?.forEach((perm) => {
+        if (perm.has_access) {
+          userPermissions.add(perm.module_name);
+        }
+      });
+      setPermissions(userPermissions);
+    } catch (error) {
+      console.error('Error loading permissions:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const togglePermission = (moduleName: string) => {
+    const newPermissions = new Set(permissions);
+    if (newPermissions.has(moduleName)) {
+      newPermissions.delete(moduleName);
+    } else {
+      newPermissions.add(moduleName);
+    }
+    setPermissions(newPermissions);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const updateData = {
+        name: editForm.name,
+        email: editForm.email,
+        role: editForm.role,
+        is_active: editForm.is_active,
+        birthday: editForm.birthday || null,
+        requires_daily_reports: editForm.requires_daily_reports,
+        requires_weekly_reports: editForm.requires_weekly_reports,
+      };
+
+      const { error: userError } = await supabase
+        .from('sales_people')
+        .update(updateData)
+        .eq('id', user.id);
+
+      if (userError) throw userError;
+
+      const permissionsToUpsert = AVAILABLE_MODULES.map((module) => ({
+        user_id: user.id,
+        module_name: module.name,
+        has_access: permissions.has(module.name),
+      }));
+
+      const { error: permError } = await supabase
+        .from('user_module_permissions')
+        .upsert(permissionsToUpsert, {
+          onConflict: 'user_id,module_name',
+        });
+
+      if (permError) throw permError;
+
+      onSave();
+    } catch (error) {
+      console.error('Error saving user:', error);
+      alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleAll = () => {
+    if (permissions.size === AVAILABLE_MODULES.length) {
+      setPermissions(new Set());
+    } else {
+      setPermissions(new Set(AVAILABLE_MODULES.map((m) => m.name)));
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!newPassword) {
+      alert('Please enter a new password');
+      return;
+    }
+    if (newPassword.length < 6) {
+      alert('Password must be at least 6 characters');
+      return;
+    }
+    if (!user.user_id) {
+      alert('User does not have a user_id, cannot reset password');
+      return;
+    }
+
+    setResettingPassword(true);
+    setPasswordResetMessage('');
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/reset-user-password`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            userId: user.user_id,
+            newPassword: newPassword,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to reset password');
+      }
+
+      setPasswordResetMessage('Password reset successfully!');
+      setNewPassword('');
+      setTimeout(() => setPasswordResetMessage(''), 3000);
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      alert(`Failed to reset password: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-4">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-slate-900">Edit User: {user.name}</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white rounded-lg transition-colors flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Saving...' : 'Save All'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors flex items-center gap-2"
+          >
+            <X className="w-4 h-4" />
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Email <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              value={editForm.email}
+              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Reset Password
+            </label>
+            {!user.user_id ? (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-2">
+                <p className="text-sm text-yellow-800">This user does not have an auth account. Cannot reset password.</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password (min 6 characters)"
+                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePasswordReset}
+                    disabled={resettingPassword || !newPassword}
+                    className="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 text-white rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                  >
+                    <Key className="w-4 h-4" />
+                    {resettingPassword ? 'Resetting...' : 'Reset'}
+                  </button>
+                </div>
+                {passwordResetMessage && (
+                  <p className="mt-2 text-sm text-green-600 font-medium">{passwordResetMessage}</p>
+                )}
+                <p className="text-xs text-slate-500 mt-1">User will need to log in with the new password immediately.</p>
+              </>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Role <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={editForm.role}
+              onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="salesperson">Salesperson</option>
+              <option value="closer">Closer</option>
+              <option value="processor">Processor</option>
+              <option value="sales_processor">Sales Processor</option>
+              <option value="admin">Admin</option>
+              <option value="super_admin">Super Admin</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Active Status <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={editForm.is_active ? 'yes' : 'no'}
+              onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value === 'yes' })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Birthday
+            </label>
+            <input
+              type="date"
+              value={editForm.birthday}
+              onChange={(e) => setEditForm({ ...editForm, birthday: e.target.value })}
+              placeholder="YYYY-MM-DD"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <p className="text-xs text-slate-500 mt-1">You can type the date (YYYY-MM-DD) or use the calendar</p>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-3">
+              Report Requirements
+            </label>
+            <div className="space-y-3">
+              <div
+                className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+                onClick={() => setEditForm({ ...editForm, requires_daily_reports: !editForm.requires_daily_reports })}
+              >
+                {editForm.requires_daily_reports ? (
+                  <CheckSquare className="w-5 h-5 text-blue-600" />
+                ) : (
+                  <Square className="w-5 h-5 text-slate-400" />
+                )}
+                <span className="text-sm text-slate-700">Daily Reports Required</span>
+              </div>
+              <div
+                className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+                onClick={() => setEditForm({ ...editForm, requires_weekly_reports: !editForm.requires_weekly_reports })}
+              >
+                {editForm.requires_weekly_reports ? (
+                  <CheckSquare className="w-5 h-5 text-blue-600" />
+                ) : (
+                  <Square className="w-5 h-5 text-slate-400" />
+                )}
+                <span className="text-sm text-slate-700">Weekly Reports Required</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-blue-600" />
+              <h4 className="font-semibold text-slate-900">Module Permissions</h4>
+            </div>
+            <button
+              onClick={toggleAll}
+              disabled={loading}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+            >
+              {permissions.size === AVAILABLE_MODULES.length ? (
+                <>
+                  <CheckSquare className="w-4 h-4" />
+                  Deselect All
+                </>
+              ) : (
+                <>
+                  <Square className="w-4 h-4" />
+                  Select All
+                </>
+              )}
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+            </div>
+          ) : (
+            <div className="bg-white rounded-lg border border-slate-200 max-h-96 overflow-y-auto">
+              {AVAILABLE_MODULES.map((module) => (
+                <div
+                  key={module.name}
+                  className="flex items-start gap-3 p-3 border-b border-slate-100 last:border-b-0 hover:bg-slate-50 cursor-pointer"
+                  onClick={() => togglePermission(module.name)}
+                >
+                  <div className="pt-0.5">
+                    {permissions.has(module.name) ? (
+                      <CheckSquare className="w-5 h-5 text-blue-600" />
+                    ) : (
+                      <Square className="w-5 h-5 text-slate-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-slate-900">{module.label}</div>
+                    <div className="text-sm text-slate-500">{module.description}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

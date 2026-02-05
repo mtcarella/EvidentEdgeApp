@@ -1,0 +1,865 @@
+import { useState, useEffect } from 'react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, Edit2, Trash2, Upload, DollarSign, FileArchive } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
+import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString, getESTToday, formatDateWithWeekday, formatDateShort } from '../lib/dateUtils';
+
+interface MeetingLog {
+  id: string;
+  meeting_date: string;
+  notes: string;
+  created_at: string;
+  salesperson_id: string;
+  is_meeting?: boolean;
+  is_text?: boolean;
+  is_call?: boolean;
+  is_email?: boolean;
+  has_expense?: boolean;
+  expense_payment_method?: string;
+  expense_amount?: number;
+  receipt_url?: string;
+  meeting_group_id?: string | null;
+  is_primary_for_expense?: boolean;
+  contact: {
+    name: string;
+    type: string;
+    company: string | null;
+    email: string | null;
+    phone: string | null;
+  };
+  salesperson: {
+    name: string;
+    email: string;
+  };
+}
+
+interface SalesPerson {
+  id: string;
+  name: string;
+}
+
+export function MeetingLogsReport() {
+  const { salesPerson, isAdmin } = useAuth();
+  const [meetings, setMeetings] = useState<MeetingLog[]>([]);
+  const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [selectedSalesperson, setSelectedSalesperson] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(true);
+  const [editingMeeting, setEditingMeeting] = useState<MeetingLog | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    meeting_date: '',
+    notes: '',
+    is_meeting: false,
+    is_text: false,
+    is_call: false,
+    is_email: false,
+    has_expense: false,
+    expense_payment_method: '',
+    expense_amount: '',
+    receipt_file: null as File | null,
+  });
+
+  useEffect(() => {
+    if (isAdmin) {
+      loadSalesPeople();
+    }
+    const today = getESTToday();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const year = thirtyDaysAgo.getFullYear();
+    const month = String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0');
+    const day = String(thirtyDaysAgo.getDate()).padStart(2, '0');
+    setStartDate(`${year}-${month}-${day}`);
+    setEndDate(getTodayDateString());
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (startDate && endDate) {
+      loadMeetings();
+    }
+  }, [startDate, endDate, selectedSalesperson]);
+
+  const loadSalesPeople = async () => {
+    const { data } = await supabase
+      .from('sales_people')
+      .select('id, name')
+      .order('name');
+    setSalesPeople(data || []);
+  };
+
+  const loadMeetings = async () => {
+    if (!salesPerson) return;
+
+    setLoading(true);
+    try {
+      let query = supabase
+        .from('meetings')
+        .select(`
+          id,
+          meeting_date,
+          notes,
+          created_at,
+          salesperson_id,
+          is_meeting,
+          is_text,
+          is_call,
+          is_email,
+          has_expense,
+          expense_payment_method,
+          expense_amount,
+          receipt_url,
+          meeting_group_id,
+          is_primary_for_expense,
+          contact:contacts(name, type, company, email, phone),
+          salesperson:sales_people!meetings_salesperson_id_fkey(name, email)
+        `)
+        .gte('meeting_date', startDate)
+        .lte('meeting_date', endDate)
+        .order('meeting_date', { ascending: false });
+
+      // Non-admin users can only see their own meetings
+      if (!isAdmin) {
+        query = query.eq('salesperson_id', salesPerson.id);
+      } else if (selectedSalesperson) {
+        // Admins can filter by specific salesperson
+        query = query.eq('salesperson_id', selectedSalesperson);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Error loading meetings:', error);
+        alert('Failed to load meetings');
+        return;
+      }
+
+      setMeetings(data || []);
+    } catch (error) {
+      console.error('Error loading meetings:', error);
+      alert('Failed to load meetings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const canEditMeeting = (meeting: MeetingLog) => {
+    if (!salesPerson) return false;
+    return isAdmin || meeting.salesperson_id === salesPerson.id;
+  };
+
+  const handleEditClick = (meeting: MeetingLog) => {
+    setEditingMeeting(meeting);
+    setEditFormData({
+      meeting_date: meeting.meeting_date,
+      notes: meeting.notes,
+      is_meeting: meeting.is_meeting || false,
+      is_text: meeting.is_text || false,
+      is_call: meeting.is_call || false,
+      is_email: meeting.is_email || false,
+      has_expense: meeting.has_expense || false,
+      expense_payment_method: meeting.expense_payment_method || '',
+      expense_amount: meeting.expense_amount ? meeting.expense_amount.toString() : '',
+      receipt_file: null,
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!editingMeeting || !salesPerson) return;
+
+    try {
+      let receiptUrl = editingMeeting.receipt_url || null;
+
+      // Upload new receipt if exists
+      if (editFormData.receipt_file) {
+        const fileExt = editFormData.receipt_file.name.split('.').pop();
+        const fileName = `${salesPerson.user_id}_${Date.now()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('receipts')
+          .upload(filePath, editFormData.receipt_file);
+
+        if (uploadError) throw uploadError;
+        receiptUrl = filePath;
+      }
+
+      const { error } = await supabase
+        .from('meetings')
+        .update({
+          meeting_date: editFormData.meeting_date,
+          notes: editFormData.notes,
+          is_meeting: editFormData.is_meeting,
+          is_text: editFormData.is_text,
+          is_call: editFormData.is_call,
+          is_email: editFormData.is_email,
+          has_expense: editFormData.has_expense,
+          expense_payment_method: editFormData.has_expense ? editFormData.expense_payment_method : null,
+          expense_amount: editFormData.has_expense && editFormData.expense_amount ? parseFloat(editFormData.expense_amount) : null,
+          receipt_url: editFormData.has_expense ? receiptUrl : null,
+        })
+        .eq('id', editingMeeting.id);
+
+      if (error) {
+        console.error('Error updating meeting:', error);
+        alert('Failed to update meeting');
+        return;
+      }
+
+      setEditingMeeting(null);
+      loadMeetings();
+    } catch (error) {
+      console.error('Error updating meeting:', error);
+      alert('Failed to update meeting');
+    }
+  };
+
+  const handleDeleteClick = async (meeting: MeetingLog) => {
+    if (!confirm(`Are you sure you want to delete this meeting with ${meeting.contact.name}?`)) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('meetings')
+        .delete()
+        .eq('id', meeting.id);
+
+      if (error) {
+        console.error('Error deleting meeting:', error);
+        alert('Failed to delete meeting');
+        return;
+      }
+
+      loadMeetings();
+    } catch (error) {
+      console.error('Error deleting meeting:', error);
+      alert('Failed to delete meeting');
+    }
+  };
+
+  const filteredMeetings = meetings.filter((meeting) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      meeting.contact.name.toLowerCase().includes(query) ||
+      meeting.salesperson.name.toLowerCase().includes(query) ||
+      meeting.notes.toLowerCase().includes(query) ||
+      meeting.contact.company?.toLowerCase().includes(query) ||
+      meeting.contact.type.toLowerCase().includes(query)
+    );
+  });
+
+  const exportToExcel = () => {
+    if (filteredMeetings.length === 0) {
+      alert('No meetings to export');
+      return;
+    }
+
+    // Sort meetings by salesperson name, then by date (most recent first)
+    const sortedMeetings = [...filteredMeetings].sort((a, b) => {
+      const nameComparison = a.salesperson.name.localeCompare(b.salesperson.name);
+      if (nameComparison !== 0) return nameComparison;
+      return new Date(b.meeting_date).getTime() - new Date(a.meeting_date).getTime();
+    });
+
+    const worksheetData = sortedMeetings.map((meeting) => {
+      const meetingTypes = [];
+      if (meeting.is_meeting) meetingTypes.push('Meeting');
+      if (meeting.is_text) meetingTypes.push('Text');
+      if (meeting.is_call) meetingTypes.push('Call');
+      if (meeting.is_email) meetingTypes.push('Email');
+
+      // Only show expense data for primary meetings (to avoid duplicates in grouped meetings)
+      const showExpense = meeting.is_primary_for_expense !== false;
+
+      return {
+        'Meeting Date': formatDateShort(meeting.meeting_date),
+        'Interaction Type': meetingTypes.join(', ') || 'Not specified',
+        'Has Expense': showExpense && meeting.has_expense ? 'Yes' : 'No',
+        'Payment Method': showExpense && meeting.expense_payment_method ? (meeting.expense_payment_method === 'personal' ? 'Personal' : 'Company') : '',
+        'Expense Amount': showExpense && meeting.expense_amount ? `$${parseFloat(meeting.expense_amount.toString()).toFixed(2)}` : '',
+        'Receipt Included': showExpense && meeting.receipt_url ? 'Yes' : 'No',
+        'Salesperson': meeting.salesperson.name,
+        'Contact Name': meeting.contact.name,
+        'Contact Type': meeting.contact.type,
+        'Contact Company': meeting.contact.company || '',
+        'Contact Email': meeting.contact.email || '',
+        'Contact Phone': meeting.contact.phone || '',
+        'Meeting Notes': meeting.notes,
+        'Logged On': formatTimestampForDisplay(meeting.created_at),
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Meeting Logs');
+
+    const filename = `meeting_logs_${startDate}_to_${endDate}.xlsx`;
+    XLSX.writeFile(workbook, filename);
+  };
+
+  const exportReceipts = async () => {
+    // Only include receipts from primary meetings to avoid duplicates
+    const meetingsWithReceipts = filteredMeetings.filter(m => m.receipt_url && m.is_primary_for_expense !== false);
+
+    if (meetingsWithReceipts.length === 0) {
+      alert('No receipts found in the selected date range');
+      return;
+    }
+
+    try {
+      const zip = new JSZip();
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const meeting of meetingsWithReceipts) {
+        try {
+          const { data: signedUrlData } = await supabase.storage
+            .from('receipts')
+            .createSignedUrl(meeting.receipt_url!, 3600);
+
+          if (signedUrlData?.signedUrl) {
+            const response = await fetch(signedUrlData.signedUrl);
+            const blob = await response.blob();
+
+            const fileExtension = meeting.receipt_url!.split('.').pop() || 'jpg';
+            const meetingDate = new Date(meeting.meeting_date);
+            const month = String(meetingDate.getMonth() + 1).padStart(2, '0');
+            const year = meetingDate.getFullYear();
+            const fileName = `${month}-${year}_${meeting.salesperson.name.replace(/\s+/g, '_')}_${meeting.contact.name.replace(/\s+/g, '_')}.${fileExtension}`;
+
+            zip.file(fileName, blob);
+            successCount++;
+          }
+        } catch (error) {
+          console.error(`Failed to download receipt for meeting ${meeting.id}:`, error);
+          failCount++;
+        }
+      }
+
+      if (successCount === 0) {
+        alert('Failed to download any receipts. Please try again.');
+        return;
+      }
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `receipts_${startDate}_to_${endDate}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (failCount > 0) {
+        alert(`Successfully downloaded ${successCount} receipt(s). ${failCount} receipt(s) failed to download.`);
+      } else {
+        alert(`Successfully downloaded ${successCount} receipt(s).`);
+      }
+    } catch (error) {
+      console.error('Error exporting receipts:', error);
+      alert('Failed to export receipts. Please try again.');
+    }
+  };
+
+  const clearFilters = () => {
+    if (isAdmin) {
+      setSelectedSalesperson('');
+    }
+    setSearchQuery('');
+    const today = getESTToday();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const year = thirtyDaysAgo.getFullYear();
+    const month = String(thirtyDaysAgo.getMonth() + 1).padStart(2, '0');
+    const day = String(thirtyDaysAgo.getDate()).padStart(2, '0');
+    setStartDate(`${year}-${month}-${day}`);
+    setEndDate(getTodayDateString());
+  };
+
+  const groupedMeetings = filteredMeetings.reduce((acc, meeting) => {
+    const salespersonName = meeting.salesperson.name;
+    if (!acc[salespersonName]) {
+      acc[salespersonName] = [];
+    }
+    acc[salespersonName].push(meeting);
+    return acc;
+  }, {} as Record<string, MeetingLog[]>);
+
+  return (
+    <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Calendar className="w-6 h-6 text-blue-600" />
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Meeting Logs Report</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Track salesperson meeting activities and notes
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Filter className="w-4 h-4" />
+              {showFilters ? 'Hide' : 'Show'} Filters
+            </button>
+            {isAdmin && (
+              <button
+                onClick={exportReceipts}
+                disabled={filteredMeetings.filter(m => m.receipt_url && m.is_primary_for_expense !== false).length === 0}
+                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                title="Export all receipts as ZIP (excluding duplicates from grouped meetings)"
+              >
+                <FileArchive className="w-4 h-4" />
+                Export Receipts
+              </button>
+            )}
+            <button
+              onClick={exportToExcel}
+              disabled={filteredMeetings.length === 0}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Export Excel
+            </button>
+            <button
+              onClick={loadMeetings}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {showFilters && (
+        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+          <div className={`grid grid-cols-1 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                End Date
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            {isAdmin && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Salesperson
+                </label>
+                <select
+                  value={selectedSalesperson}
+                  onChange={(e) => setSelectedSalesperson(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">All Salespeople</option>
+                  {salesPeople.map((sp) => (
+                    <option key={sp.id} value={sp.id}>
+                      {sp.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Search
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Contact, notes..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <p className="text-sm text-slate-600">
+              Found {filteredMeetings.length} meeting{filteredMeetings.length !== 1 ? 's' : ''}
+              {isAdmin && selectedSalesperson && ` for selected salesperson`}
+            </p>
+            <button
+              onClick={clearFilters}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+            >
+              <X className="w-4 h-4" />
+              Clear Filters
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="p-6">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : filteredMeetings.length === 0 ? (
+          <div className="text-center py-12">
+            <Calendar className="w-16 h-16 mx-auto text-slate-300 mb-4" />
+            <p className="text-lg font-semibold text-slate-900 mb-2">No Meetings Found</p>
+            <p className="text-slate-600">
+              {startDate && endDate
+                ? 'No meetings were logged during the selected period.'
+                : 'Select a date range to view meeting logs.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(groupedMeetings)
+              .sort(([nameA], [nameB]) => nameA.localeCompare(nameB))
+              .map(([salespersonName, salespersonMeetings]) => (
+              <div key={salespersonName} className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="bg-blue-50 px-4 py-3 border-b border-slate-200">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-slate-900 text-lg">{salespersonName}</h3>
+                    <span className="text-sm font-medium text-slate-600">
+                      {salespersonMeetings.length} meeting{salespersonMeetings.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+                <div className="divide-y divide-slate-200">
+                  {salespersonMeetings.map((meeting) => (
+                    <div key={meeting.id} className="p-4 hover:bg-slate-50 transition-colors">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="text-lg font-semibold text-slate-900">
+                              {meeting.contact.name}
+                            </span>
+                            <span className="px-2 py-1 bg-slate-100 text-slate-700 text-xs font-medium rounded capitalize">
+                              {meeting.contact.type}
+                            </span>
+                          </div>
+                          {meeting.contact.company && (
+                            <p className="text-sm text-slate-600 mb-1">{meeting.contact.company}</p>
+                          )}
+                          <div className="flex gap-4 text-sm text-slate-500">
+                            {meeting.contact.email && <span>{meeting.contact.email}</span>}
+                            {meeting.contact.phone && <span>{meeting.contact.phone}</span>}
+                          </div>
+                          <div className="flex gap-2 flex-wrap mt-2">
+                            {meeting.is_meeting && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">
+                                Meeting
+                              </span>
+                            )}
+                            {meeting.is_text && (
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">
+                                Text
+                              </span>
+                            )}
+                            {meeting.is_call && (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                                Call
+                              </span>
+                            )}
+                            {meeting.is_email && (
+                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">
+                                Email
+                              </span>
+                            )}
+                            {meeting.has_expense && meeting.is_primary_for_expense !== false && (
+                              <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
+                                Expense{meeting.expense_payment_method ? ` (${meeting.expense_payment_method === 'personal' ? 'Personal' : 'Company'})` : ''}
+                              </span>
+                            )}
+                            {meeting.has_expense && meeting.is_primary_for_expense === false && (
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs font-medium rounded">
+                                Expense (See Primary)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex items-start gap-2 mb-2">
+                            {canEditMeeting(meeting) && (
+                              <>
+                                <button
+                                  onClick={() => handleEditClick(meeting)}
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                  title="Edit meeting"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteClick(meeting)}
+                                  className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors"
+                                  title="Delete meeting"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          <p className="text-sm font-semibold text-slate-900 mb-1">
+                            {formatDateWithWeekday(meeting.meeting_date)}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Logged: {formatTimestampForDisplay(meeting.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                        <p className="text-sm font-medium text-slate-700 mb-1">Meeting Notes:</p>
+                        <p className="text-sm text-slate-600 whitespace-pre-wrap">{meeting.notes}</p>
+                      </div>
+                      {meeting.has_expense && meeting.is_primary_for_expense !== false && (
+                        <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-200 mt-3">
+                          <p className="text-sm font-semibold text-yellow-900 mb-2">Expense Details:</p>
+                          <div className="flex items-center gap-4 flex-wrap">
+                            {meeting.expense_amount ? (
+                              <div className="flex items-center gap-1">
+                                <DollarSign className="w-5 h-5 text-yellow-700" />
+                                <span className="font-bold text-yellow-900 text-lg">
+                                  ${parseFloat(meeting.expense_amount.toString()).toFixed(2)}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-sm text-yellow-700">Amount not specified</span>
+                            )}
+                            {meeting.receipt_url ? (
+                              <button
+                                onClick={async () => {
+                                  const { data } = await supabase.storage
+                                    .from('receipts')
+                                    .createSignedUrl(meeting.receipt_url!, 60);
+                                  if (data?.signedUrl) {
+                                    window.open(data.signedUrl, '_blank');
+                                  }
+                                }}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors font-medium text-sm"
+                              >
+                                <Download className="w-4 h-4" />
+                                View Receipt
+                              </button>
+                            ) : (
+                              <span className="text-sm text-yellow-700 italic">No receipt uploaded</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {meeting.has_expense && meeting.is_primary_for_expense === false && (
+                        <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 mt-3">
+                          <p className="text-sm text-slate-600 italic">
+                            Expense details shown on primary contact entry to avoid duplication
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {editingMeeting && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
+              <h3 className="text-xl font-bold text-slate-900">Edit Meeting</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                Update meeting with {editingMeeting.contact.name}
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Meeting Date
+                </label>
+                <input
+                  type="date"
+                  value={editFormData.meeting_date}
+                  onChange={(e) => setEditFormData({ ...editFormData, meeting_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Interaction Type
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 p-3 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={editFormData.is_meeting}
+                      onChange={(e) => setEditFormData({ ...editFormData, is_meeting: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">Meeting</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-3 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={editFormData.is_text}
+                      onChange={(e) => setEditFormData({ ...editFormData, is_text: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">Text</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-3 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={editFormData.is_call}
+                      onChange={(e) => setEditFormData({ ...editFormData, is_call: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">Call</span>
+                  </label>
+                  <label className="flex items-center gap-2 p-3 border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={editFormData.is_email}
+                      onChange={(e) => setEditFormData({ ...editFormData, is_email: e.target.checked })}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-slate-700">Email</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Meeting Notes
+                </label>
+                <textarea
+                  value={editFormData.notes}
+                  onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  placeholder="Enter meeting notes..."
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-3 cursor-pointer p-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg hover:bg-yellow-100 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={editFormData.has_expense}
+                    onChange={(e) => {
+                      setEditFormData({
+                        ...editFormData,
+                        has_expense: e.target.checked,
+                        expense_payment_method: e.target.checked ? editFormData.expense_payment_method : ''
+                      });
+                    }}
+                    className="w-5 h-5 text-yellow-600 border-yellow-400 rounded focus:ring-yellow-500"
+                  />
+                  <span className="text-base font-bold text-slate-800">This meeting had an expense</span>
+                </label>
+                {editFormData.has_expense && (
+                  <div className="mt-3 p-4 bg-white border-2 border-yellow-300 rounded-lg">
+                    <p className="text-sm font-semibold text-slate-700 mb-3">Payment Method:</p>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="edit-payment-method"
+                          value="personal"
+                          checked={editFormData.expense_payment_method === 'personal'}
+                          onChange={(e) => setEditFormData({ ...editFormData, expense_payment_method: e.target.value })}
+                          className="w-4 h-4 text-yellow-600 focus:ring-yellow-500"
+                        />
+                        <span className="text-sm text-slate-700">Personal Credit Card</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="edit-payment-method"
+                          value="company"
+                          checked={editFormData.expense_payment_method === 'company'}
+                          onChange={(e) => setEditFormData({ ...editFormData, expense_payment_method: e.target.value })}
+                          className="w-4 h-4 text-yellow-600 focus:ring-yellow-500"
+                        />
+                        <span className="text-sm text-slate-700">Company Credit Card</span>
+                      </label>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                          <DollarSign className="w-4 h-4 inline mr-1" />
+                          Expense Amount
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editFormData.expense_amount}
+                          onChange={(e) => setEditFormData({ ...editFormData, expense_amount: e.target.value })}
+                          placeholder="0.00"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                          <Upload className="w-4 h-4 inline mr-1" />
+                          Upload New Receipt
+                        </label>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={(e) => setEditFormData({ ...editFormData, receipt_file: e.target.files?.[0] || null })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 bg-slate-50">
+              <button
+                onClick={() => setEditingMeeting(null)}
+                className="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditSave}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
