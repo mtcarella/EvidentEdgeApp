@@ -388,7 +388,7 @@ export function ImportData() {
 
   return (
     <div className="bg-white rounded-xl shadow-sm p-6">
-      <h2 className="text-2xl font-bold text-slate-900 mb-6">Import Data from CSV</h2>
+      <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none mb-6">Import Data from CSV</h2>
 
       {!showPreview && !result && (
         <>

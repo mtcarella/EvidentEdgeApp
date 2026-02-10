@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, Edit2, Trash2, X, Save } from 'lucide-react';
+import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, Edit2, Trash2, X, Save, ExternalLink, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateForDisplay, nowInEST } from '../lib/dateUtils';
@@ -38,9 +38,9 @@ interface VerificationLog {
   buyer_name?: string;
 }
 
-type ViewMode = 'search' | 'add' | 'logs' | 'manage';
+type ViewMode = 'search' | 'add' | 'logs' | 'manage' | 'incoming';
 
-export function VerifyWires() {
+export function WireManagement() {
   const { user, userProfile } = useAuth();
   const [viewMode, setViewMode] = useState<ViewMode>('search');
   const [loading, setLoading] = useState(false);
@@ -147,7 +147,6 @@ export function VerifyWires() {
       return;
     }
 
-    // Validate conditional fields based on reason
     if (reasonForWire === 'seller_proceeds' && (!propertyAddress || !sellerName)) {
       alert('Please fill in Property Address and Seller Name for Seller Proceeds');
       return;
@@ -520,14 +519,18 @@ TRANSFER INFORMATION
     }
   };
 
+  const handleOpenSpreadsheet = () => {
+    window.open('https://evidenttitle.sharepoint.com/:x:/s/Wires/IQAQ6Xy3dY47TYq_BxbZauTPAWr8MMt3vy-lx6BL39jwaWw?e=GNFO7e', '_blank');
+  };
+
   return (
     <div className="bg-white rounded-xl shadow-sm p-6">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <FileCheck className="w-6 h-6 text-slate-700" />
-          <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Verify Wires</h2>
+          <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Wire Management</h2>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             onClick={() => setViewMode('search')}
             className={`px-4 py-2 rounded-lg transition-colors ${
@@ -537,7 +540,18 @@ TRANSFER INFORMATION
             }`}
           >
             <Search className="w-4 h-4 inline mr-2" />
-            Search
+            Verify
+          </button>
+          <button
+            onClick={() => setViewMode('incoming')}
+            className={`px-4 py-2 rounded-lg transition-colors ${
+              viewMode === 'incoming'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4 inline mr-2" />
+            Incoming
           </button>
           <button
             onClick={() => setViewMode('add')}
@@ -581,6 +595,42 @@ TRANSFER INFORMATION
           )}
         </div>
       </div>
+
+      {viewMode === 'incoming' && (
+        <div className="p-8 bg-slate-50 rounded-lg">
+          <div className="max-w-2xl mx-auto text-center space-y-6">
+            <div className="flex justify-center">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center">
+                <FileSpreadsheet className="w-10 h-10 text-blue-600" />
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">
+                Access Incoming Wires Spreadsheet
+              </h3>
+              <p className="text-slate-600">
+                Click the button below to open the SharePoint spreadsheet in a new tab. Make sure you're logged into your Microsoft account.
+              </p>
+            </div>
+
+            <button
+              onClick={handleOpenSpreadsheet}
+              className="inline-flex items-center gap-3 px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+            >
+              <FileSpreadsheet className="w-6 h-6" />
+              <span>Open Incoming Wires Spreadsheet</span>
+              <ExternalLink className="w-5 h-5" />
+            </button>
+
+            <div className="pt-4 border-t border-slate-200">
+              <p className="text-xs text-slate-500">
+                If you're unable to access the spreadsheet, please ensure you have the proper permissions or contact your administrator.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {viewMode === 'search' && (
         <div className="space-y-6">
@@ -642,7 +692,6 @@ TRANSFER INFORMATION
             </div>
           </div>
 
-          {/* Conditional fields based on reason for wire */}
           {reasonForWire === 'seller_proceeds' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-50 rounded-lg">
               <div>
@@ -910,7 +959,7 @@ TRANSFER INFORMATION
                     </div>
                   </div>
                   <button
-                    onClick={generatePDF}
+                    onClick={() => generatePDF()}
                     className="mt-4 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                   >
                     <Download className="w-4 h-4 inline mr-2" />

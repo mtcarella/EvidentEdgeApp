@@ -7,6 +7,7 @@ interface SalesPerson {
   user_id: string | null;
   name: string;
   email: string;
+  cell_phone?: string | null;
   role: string;
   is_active: boolean;
   birthday?: string | null;
@@ -43,6 +44,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
   const [editForm, setEditForm] = useState({
     name: user.name,
     email: user.email,
+    cell_phone: user.cell_phone || '',
     role: user.role,
     is_active: user.is_active,
     birthday: user.birthday || '',
@@ -100,6 +102,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
       const updateData = {
         name: editForm.name,
         email: editForm.email,
+        cell_phone: editForm.cell_phone || null,
         role: editForm.role,
         is_active: editForm.is_active,
         birthday: editForm.birthday || null,
@@ -247,6 +250,20 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
               onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Cell Phone
+            </label>
+            <input
+              type="tel"
+              value={editForm.cell_phone}
+              onChange={(e) => setEditForm({ ...editForm, cell_phone: e.target.value })}
+              placeholder="+12345678900 (E.164 format for SMS)"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <p className="text-xs text-slate-500 mt-1">Required for SMS notifications. Use E.164 format: +[country code][number]</p>
           </div>
 
           <div className="border-t border-slate-200 pt-4">

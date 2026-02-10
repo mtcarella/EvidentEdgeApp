@@ -350,7 +350,7 @@ export default function WeeklyReportsView() {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <FileText className="w-8 h-8 text-blue-600" />
-            <h2 className="text-2xl font-bold text-gray-800">Performance Reports</h2>
+            <h2 className="text-2xl font-bold text-gray-800 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Performance Reports</h2>
           </div>
           <button
             onClick={exportToExcel}

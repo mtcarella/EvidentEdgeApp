@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, Edit2, X, Save, Loader, ArrowUpDown, ArrowUp, ArrowDown, Search, Eye, Download, ChevronDown, ChevronUp, Cake, Mail, CheckSquare, Square } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, Edit2, X, Save, Loader, ArrowUpDown, ArrowUp, ArrowDown, Search, Eye, Download, ChevronDown, ChevronUp, Mail, CheckSquare, Square } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -60,8 +60,6 @@ export function MyContacts() {
   const [viewingContactId, setViewingContactId] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
   const [expandedContacts, setExpandedContacts] = useState<Set<string>>(new Set());
-  const [showUpcomingBirthdays, setShowUpcomingBirthdays] = useState(false);
-  const [upcomingBirthdays, setUpcomingBirthdays] = useState<Contact[]>([]);
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -113,89 +111,6 @@ export function MyContacts() {
     }
   };
 
-  const loadUpcomingBirthdays = async () => {
-    if (!salesPerson?.id) return;
-
-    try {
-      // Get list of salesperson IDs this user has access to
-      const { data: sharedAccess } = await supabase
-        .from('shared_contact_access')
-        .select('salesperson_id')
-        .eq('viewer_id', salesPerson.id);
-
-      const accessibleSalespeopleIds = [salesPerson.id];
-      if (sharedAccess) {
-        accessibleSalespeopleIds.push(...sharedAccess.map(sa => sa.salesperson_id));
-      }
-
-      const { data, error } = await supabase
-        .from('contacts')
-        .select(`
-          *,
-          assignments!inner (
-            salesperson_id
-          )
-        `)
-        .in('assignments.salesperson_id', accessibleSalespeopleIds)
-        .not('birthday', 'is', null);
-
-      if (error) throw error;
-
-      const today = getESTToday();
-      const todayMD = { month: today.getMonth() + 1, day: today.getDate() };
-
-      const fiveDaysFromNow = new Date(today);
-      fiveDaysFromNow.setDate(today.getDate() + 5);
-
-      const upcoming = (data || []).filter(contact => {
-        if (!contact.birthday) return false;
-
-        // Parse birthday correctly to avoid timezone issues
-        const [year, month, day] = contact.birthday.split('-').map(Number);
-        const birthdayDate = new Date(year, month - 1, day);
-        const birthdayMD = { month: birthdayDate.getMonth() + 1, day: birthdayDate.getDate() };
-
-        for (let i = 0; i <= 5; i++) {
-          const checkDate = new Date(today);
-          checkDate.setDate(today.getDate() + i);
-          const checkMD = { month: checkDate.getMonth() + 1, day: checkDate.getDate() };
-
-          if (birthdayMD.month === checkMD.month && birthdayMD.day === checkMD.day) {
-            return true;
-          }
-        }
-
-        return false;
-      }).sort((a, b) => {
-        // Parse birthdays correctly to avoid timezone issues
-        const [aYear, aMonth, aDay] = a.birthday!.split('-').map(Number);
-        const [bYear, bMonth, bDay] = b.birthday!.split('-').map(Number);
-        const aDate = new Date(aYear, aMonth - 1, aDay);
-        const bDate = new Date(bYear, bMonth - 1, bDay);
-        const aMD = { month: aDate.getMonth() + 1, day: aDate.getDate() };
-        const bMD = { month: bDate.getMonth() + 1, day: bDate.getDate() };
-
-        const getDaysUntil = (md: { month: number; day: number }) => {
-          for (let i = 0; i <= 5; i++) {
-            const checkDate = new Date(today);
-            checkDate.setDate(today.getDate() + i);
-            const checkMD = { month: checkDate.getMonth() + 1, day: checkDate.getDate() };
-            if (md.month === checkMD.month && md.day === checkMD.day) {
-              return i;
-            }
-          }
-          return 999;
-        };
-
-        return getDaysUntil(aMD) - getDaysUntil(bMD);
-      });
-
-      setUpcomingBirthdays(upcoming);
-      setShowUpcomingBirthdays(true);
-    } catch (error) {
-      console.error('Error loading upcoming birthdays:', error);
-    }
-  };
 
   const handleEdit = (contact: Contact) => {
     // Only open the modal, don't set inline editing state
@@ -435,13 +350,13 @@ export function MyContacts() {
   }
 
   return (
-    <div className={`bg-white rounded-xl shadow-sm ${isMobile ? 'p-3' : 'p-6'}`}>
+    <div className={`bg-white rounded-xl shadow-sm overflow-hidden ${isMobile ? 'p-3' : 'p-6'}`}>
       <div className={isMobile ? 'mb-4' : 'mb-6'}>
-        <div className="flex items-center justify-between mb-2 gap-2">
-          <h2 className={`font-bold text-slate-900 ${isMobile ? 'text-lg' : 'text-2xl'}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-2 gap-2">
+          <h2 className={`font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none ${isMobile ? 'text-lg' : 'text-2xl'}`}>
             My Contacts
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={handleEmailList}
               disabled={selectedContacts.size === 0}
@@ -452,15 +367,6 @@ export function MyContacts() {
             >
               <Mail className="w-4 h-4" />
               <span>{isMobile ? 'Email' : `Email List${selectedContacts.size > 0 ? ` (${selectedContacts.size})` : ''}`}</span>
-            </button>
-            <button
-              onClick={loadUpcomingBirthdays}
-              className={`bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white rounded-lg transition-colors flex items-center text-sm flex-shrink-0 ${
-                isMobile ? 'px-3 py-2 gap-1' : 'px-4 py-2 gap-2'
-              }`}
-            >
-              <Cake className="w-4 h-4" />
-              <span>{isMobile ? 'Birthdays' : 'Upcoming Birthdays'}</span>
             </button>
             <button
               onClick={exportMyContacts}
@@ -481,13 +387,15 @@ export function MyContacts() {
 
       <div className="mb-4">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 ${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
           <input
             type="text"
-            placeholder="Search contacts by name, email, phone, company, branch, address, or notes..."
+            placeholder={isMobile ? "Search contacts..." : "Search contacts by name, email, phone, company, branch, address, or notes..."}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={`w-full pl-10 pr-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+              isMobile ? 'py-2 text-sm' : 'py-2'
+            }`}
           />
         </div>
         {searchQuery && (
@@ -658,7 +566,9 @@ export function MyContacts() {
             return (
               <div
                 key={contact.id}
-                className="p-4 border border-slate-200 rounded-lg hover:shadow-md transition-shadow"
+                className={`border border-slate-200 rounded-lg hover:shadow-md transition-shadow ${
+                  isMobile ? 'p-3' : 'p-4'
+                }`}
               >
                 {isEditing ? (
                   <div className="space-y-4">
@@ -802,37 +712,37 @@ export function MyContacts() {
                   </div>
                 ) : (
                   <div>
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-3 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-2 sm:gap-3 flex-1 min-w-0">
                         <button
                           onClick={() => toggleContactSelection(contact.id)}
-                          className="mt-2 p-1 hover:bg-slate-100 rounded transition-colors"
+                          className="mt-1 sm:mt-2 p-1 hover:bg-slate-100 rounded transition-colors flex-shrink-0"
                           title={selectedContacts.has(contact.id) ? 'Deselect contact' : 'Select contact'}
                         >
                           {selectedContacts.has(contact.id) ? (
-                            <CheckSquare className="w-5 h-5 text-blue-600" />
+                            <CheckSquare className={`text-blue-600 ${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
                           ) : (
-                            <Square className="w-5 h-5 text-slate-400" />
+                            <Square className={`text-slate-400 ${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
                           )}
                         </button>
-                        <div className="bg-slate-100 rounded-lg p-2 mt-1">
-                          <Icon className="w-5 h-5 text-slate-600" />
+                        <div className={`bg-slate-100 rounded-lg mt-1 flex-shrink-0 ${isMobile ? 'p-1.5' : 'p-2'}`}>
+                          <Icon className={`text-slate-600 ${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
                         </div>
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-semibold text-slate-900">{contact.name}</h3>
-                            <span className="text-xs font-medium px-2 py-1 bg-slate-100 text-slate-700 rounded">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <h3 className={`font-semibold text-slate-900 ${isMobile ? 'text-sm' : ''}`}>{contact.name}</h3>
+                            <span className="text-xs font-medium px-2 py-1 bg-slate-100 text-slate-700 rounded whitespace-nowrap">
                               {typeLabels[contact.type as keyof typeof typeLabels]}
                             </span>
                           </div>
-                          <div className="text-sm text-slate-600">
-                            {contact.email && <span>{contact.email}</span>}
+                          <div className={`text-slate-600 break-words ${isMobile ? 'text-xs' : 'text-sm'}`}>
+                            {contact.email && <span className="break-all">{contact.email}</span>}
                             {contact.email && contact.phone && <span className="mx-2">•</span>}
                             {contact.phone && <span>{contact.phone}</span>}
                           </div>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1 sm:gap-2 flex-shrink-0">
                         <button
                           onClick={() => {
                             const newExpanded = new Set(expandedContacts);
@@ -843,33 +753,42 @@ export function MyContacts() {
                             }
                             setExpandedContacts(newExpanded);
                           }}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-lg transition-colors text-sm"
+                          className={`flex items-center bg-slate-600 hover:bg-slate-700 text-white rounded-lg transition-colors ${
+                            isMobile ? 'p-2' : 'gap-1 px-3 py-1.5 text-sm'
+                          }`}
+                          title={expandedContacts.has(contact.id) ? 'Collapse' : 'Expand'}
                         >
                           {expandedContacts.has(contact.id) ? (
                             <>
                               <ChevronUp className="w-4 h-4" />
-                              Collapse
+                              {!isMobile && 'Collapse'}
                             </>
                           ) : (
                             <>
                               <ChevronDown className="w-4 h-4" />
-                              Expand
+                              {!isMobile && 'Expand'}
                             </>
                           )}
                         </button>
                         <button
                           onClick={() => setViewingContactId(contact.id)}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                          className={`flex items-center bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors ${
+                            isMobile ? 'p-2' : 'gap-1 px-3 py-1.5 text-sm'
+                          }`}
+                          title="View contact"
                         >
                           <Eye className="w-4 h-4" />
-                          View
+                          {!isMobile && 'View'}
                         </button>
                         <button
                           onClick={() => handleEdit(contact)}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+                          className={`flex items-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors ${
+                            isMobile ? 'p-2' : 'gap-1 px-3 py-1.5 text-sm'
+                          }`}
+                          title="Edit contact"
                         >
                           <Edit2 className="w-4 h-4" />
-                          Edit
+                          {!isMobile && 'Edit'}
                         </button>
                       </div>
                     </div>
@@ -949,133 +868,6 @@ export function MyContacts() {
           }}
           onCancel={() => setEditingContact(null)}
         />
-      )}
-
-      {showUpcomingBirthdays && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-pink-500 to-purple-500 text-white">
-              <div className="flex items-center gap-3">
-                <Cake className="w-6 h-6" />
-                <h2 className="text-xl font-bold">Upcoming Birthdays (Next 5 Days)</h2>
-              </div>
-              <button
-                onClick={() => setShowUpcomingBirthdays(false)}
-                className="p-1 hover:bg-white/20 rounded transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              {upcomingBirthdays.length === 0 ? (
-                <div className="text-center py-12">
-                  <Cake className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                  <p className="text-slate-600 text-lg">No upcoming birthdays in the next 5 days</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {upcomingBirthdays.map((contact) => {
-                    const Icon = typeIcons[contact.type as keyof typeof typeIcons];
-
-                    // Parse birthday correctly to avoid timezone issues
-                    const [year, month, day] = contact.birthday!.split('-').map(Number);
-                    const birthdayDate = new Date(year, month - 1, day);
-                    const today = getESTToday();
-
-                    let daysUntil = 0;
-                    for (let i = 0; i <= 5; i++) {
-                      const checkDate = new Date(today);
-                      checkDate.setDate(today.getDate() + i);
-                      if (
-                        birthdayDate.getMonth() === checkDate.getMonth() &&
-                        birthdayDate.getDate() === checkDate.getDate()
-                      ) {
-                        daysUntil = i;
-                        break;
-                      }
-                    }
-
-                    const getDaysLabel = (days: number) => {
-                      if (days === 0) return 'Today';
-                      if (days === 1) return 'Tomorrow';
-                      return `In ${days} days`;
-                    };
-
-                    const formattedDate = birthdayDate.toLocaleDateString('en-US', {
-                      month: 'long',
-                      day: 'numeric'
-                    });
-
-                    return (
-                      <div
-                        key={contact.id}
-                        className={`p-4 rounded-lg border-2 transition-all ${
-                          daysUntil === 0
-                            ? 'border-pink-500 bg-pink-50'
-                            : daysUntil === 1
-                            ? 'border-purple-400 bg-purple-50'
-                            : 'border-slate-200 bg-white hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div className={`rounded-lg p-2 ${
-                            daysUntil === 0
-                              ? 'bg-pink-100'
-                              : daysUntil === 1
-                              ? 'bg-purple-100'
-                              : 'bg-slate-100'
-                          }`}>
-                            <Icon className={`w-5 h-5 ${
-                              daysUntil === 0
-                                ? 'text-pink-600'
-                                : daysUntil === 1
-                                ? 'text-purple-600'
-                                : 'text-slate-600'
-                            }`} />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between mb-1">
-                              <h3 className="font-semibold text-slate-900">{contact.name}</h3>
-                              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                                daysUntil === 0
-                                  ? 'bg-pink-500 text-white'
-                                  : daysUntil === 1
-                                  ? 'bg-purple-500 text-white'
-                                  : 'bg-slate-200 text-slate-700'
-                              }`}>
-                                {getDaysLabel(daysUntil)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-sm text-slate-600">
-                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">
-                                {typeLabels[contact.type as keyof typeof typeLabels]}
-                              </span>
-                              <span>•</span>
-                              <span className="flex items-center gap-1">
-                                <Cake className="w-4 h-4" />
-                                {formattedDate}
-                              </span>
-                            </div>
-                            {contact.company && (
-                              <div className="mt-1 text-sm text-slate-600">
-                                {contact.company}
-                              </div>
-                            )}
-                            {contact.email && (
-                              <div className="mt-1 text-sm text-slate-600">
-                                {contact.email}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

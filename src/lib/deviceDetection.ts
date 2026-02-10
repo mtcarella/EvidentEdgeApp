@@ -5,6 +5,13 @@ export type DeviceType = 'mobile' | 'tablet' | 'desktop';
 export function detectDeviceType(): DeviceType {
   if (typeof window === 'undefined') return 'desktop';
 
+  const width = window.innerWidth;
+
+  // Use width-based detection for responsive view
+  if (width < 768) return 'mobile';
+  if (width < 1024) return 'tablet';
+
+  // Fallback to user agent for larger screens
   const userAgent = navigator.userAgent.toLowerCase();
   const isMobile = /iphone|ipod|android|blackberry|windows phone|opera mini|iemobile/i.test(userAgent);
   const isTablet = /ipad|android(?!.*mobile)|tablet/i.test(userAgent);

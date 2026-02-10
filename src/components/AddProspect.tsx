@@ -308,7 +308,7 @@ export function AddProspect() {
   return (
     <div className="bg-white rounded-xl shadow-sm p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-slate-900">Add New Prospect</h2>
+        <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Add New Prospect</h2>
         <button
           type="button"
           onClick={() => setShowCloneSearch(!showCloneSearch)}

@@ -8,7 +8,7 @@ export function IncomingWires() {
   return (
     <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
-        <h2 className="text-2xl font-bold text-slate-900">Incoming Wires</h2>
+        <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Incoming Wires</h2>
         <p className="text-sm text-slate-600 mt-1">
           View and track incoming wire transfers
         </p>

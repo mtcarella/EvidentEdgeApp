@@ -141,20 +141,21 @@ export function LoginForm() {
     <div className="min-h-screen bg-gradient-to-br from-[#3c4f54] via-[#2f4649] to-[#3c4f54] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <div className="flex items-center justify-center mb-6">
+          <div className="flex items-center justify-center mb-8">
             <img
-              src="/circle-logo.png"
+              src="/Copy_of_Copy_of_Evident_Logo_26_(3).png"
               alt="Evident Title Agency"
-              className="h-32 w-32 object-contain"
+              className="h-32 object-contain"
             />
           </div>
 
-          <h2 className="text-3xl font-bold text-center text-[#3c4f54] mb-2">
-            Evident Edge
-          </h2>
-          <p className="text-center text-slate-600 mb-8">
-            {isLogin ? 'Sign in to your account' : 'Create a new account'}
-          </p>
+          <div className="flex justify-center mb-8">
+            <div className="inline-block border-2 border-[#3c4f54] rounded px-1 py-0.5">
+              <h2 className="text-lg font-serif font-semibold text-[#3c4f54] tracking-wide whitespace-nowrap">
+                {isLogin ? 'Sign in to your account' : 'Create a new account'}
+              </h2>
+            </div>
+          </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
             {!isLogin && (

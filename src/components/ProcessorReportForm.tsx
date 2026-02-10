@@ -349,7 +349,7 @@ export default function ProcessorReportForm() {
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="flex items-center gap-3 mb-6">
             <FileText className="w-8 h-8 text-blue-600" />
-            <h2 className="text-2xl font-bold text-gray-800">Performance Report</h2>
+            <h2 className="text-2xl font-bold text-gray-800 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Performance Report</h2>
           </div>
 
           {errorMessage && (

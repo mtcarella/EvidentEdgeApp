@@ -167,7 +167,7 @@ export function ModulePermissionsManager() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <Shield className="w-6 h-6 text-blue-600" />
-          <h2 className="text-2xl font-bold text-slate-900">Module Permissions Management</h2>
+          <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Module Permissions Management</h2>
         </div>
         <button
           onClick={loadUsers}

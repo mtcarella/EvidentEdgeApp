@@ -120,7 +120,7 @@ export function ConflictCheck() {
             <Search className="w-6 h-6 text-blue-600" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Conflict Check</h2>
+            <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Conflict Check</h2>
             <p className="text-slate-600 text-sm mt-1">
               Check if a prospect is already in the system
             </p>

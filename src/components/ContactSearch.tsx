@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Search, User, Users, Briefcase, Scale, Edit2, X, Save, Eye } from 'lucide-react';
+import { Search, User, Users, Briefcase, Scale, Edit2, X, Save, Eye, Cake, Wrench } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useModulePermissions } from '../hooks/useModulePermissions';
 import { ContactView } from './ContactView';
 import { Toast } from './Toast';
+import { BirthdayBanner } from './BirthdayBanner';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
-import { formatDateShort } from '../lib/dateUtils';
+import { formatDateShort, getESTToday } from '../lib/dateUtils';
 
 interface SearchResult {
   id: string;
@@ -42,6 +43,7 @@ const typeIcons = {
   realtor: Users,
   loan_officer: Briefcase,
   attorney: Scale,
+  vendor: Wrench,
 };
 
 const typeLabels = {
@@ -49,6 +51,7 @@ const typeLabels = {
   realtor: 'Realtor',
   loan_officer: 'Loan Officer',
   attorney: 'Attorney',
+  vendor: 'Vendor',
 };
 
 const typePriority = {
@@ -118,6 +121,8 @@ export function ContactSearch() {
   const [editForm, setEditForm] = useState<Partial<SearchResult>>({});
   const [viewingContactId, setViewingContactId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [showUpcomingBirthdays, setShowUpcomingBirthdays] = useState(false);
+  const [upcomingBirthdays, setUpcomingBirthdays] = useState<SearchResult[]>([]);
 
   const handleFilterChange = (type: keyof SearchFilters, value: string) => {
     setFilters(prev => ({ ...prev, [type]: value }));
@@ -280,6 +285,90 @@ export function ContactSearch() {
     setCrossoverPerson(null);
   };
 
+  const loadUpcomingBirthdays = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('contacts')
+        .select('*')
+        .not('birthday', 'is', null);
+
+      if (error) throw error;
+
+      const today = getESTToday();
+      const todayMD = { month: today.getMonth() + 1, day: today.getDate() };
+
+      const fiveDaysFromNow = new Date(today);
+      fiveDaysFromNow.setDate(today.getDate() + 5);
+
+      const upcoming = (data || []).filter(contact => {
+        if (!contact.birthday) return false;
+
+        const [year, month, day] = contact.birthday.split('-').map(Number);
+        const birthdayDate = new Date(year, month - 1, day);
+        const birthdayMD = { month: birthdayDate.getMonth() + 1, day: birthdayDate.getDate() };
+
+        for (let i = 0; i <= 5; i++) {
+          const checkDate = new Date(today);
+          checkDate.setDate(today.getDate() + i);
+          const checkMD = { month: checkDate.getMonth() + 1, day: checkDate.getDate() };
+
+          if (birthdayMD.month === checkMD.month && birthdayMD.day === checkMD.day) {
+            return true;
+          }
+        }
+
+        return false;
+      }).sort((a, b) => {
+        const [aYear, aMonth, aDay] = a.birthday!.split('-').map(Number);
+        const [bYear, bMonth, bDay] = b.birthday!.split('-').map(Number);
+        const aDate = new Date(aYear, aMonth - 1, aDay);
+        const bDate = new Date(bYear, bMonth - 1, bDay);
+        const aMD = { month: aDate.getMonth() + 1, day: aDate.getDate() };
+        const bMD = { month: bDate.getMonth() + 1, day: bDate.getDate() };
+
+        const getDaysUntil = (md: { month: number; day: number }) => {
+          for (let i = 0; i <= 5; i++) {
+            const checkDate = new Date(today);
+            checkDate.setDate(today.getDate() + i);
+            const checkMD = { month: checkDate.getMonth() + 1, day: checkDate.getDate() };
+            if (md.month === checkMD.month && md.day === checkMD.day) {
+              return i;
+            }
+          }
+          return 999;
+        };
+
+        return getDaysUntil(aMD) - getDaysUntil(bMD);
+      });
+
+      const formattedResults: SearchResult[] = upcoming.map(contact => ({
+        id: contact.id,
+        name: contact.name,
+        type: contact.type,
+        salesPerson: 'N/A',
+        email: contact.email,
+        phone: contact.phone,
+        cell_phone: contact.cell_phone,
+        company: contact.company,
+        branch: contact.branch,
+        address: contact.address,
+        paralegal: contact.paralegal,
+        preferred_surveyor: contact.preferred_surveyor,
+        preferred_uw: contact.preferred_uw,
+        preferred_closer: contact.preferred_closer,
+        birthday: contact.birthday,
+        drinks: contact.drinks,
+        notes: contact.notes,
+        processor_notes: contact.processor_notes,
+      }));
+
+      setUpcomingBirthdays(formattedResults);
+      setShowUpcomingBirthdays(true);
+    } catch (error) {
+      console.error('Error loading upcoming birthdays:', error);
+    }
+  };
+
 
   const handleEdit = (result: SearchResult) => {
     setEditingId(result.id);
@@ -369,8 +458,20 @@ export function ContactSearch() {
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-      <h2 className="text-2xl font-bold text-slate-900 mb-6">Search Contacts</h2>
+    <>
+      <BirthdayBanner />
+      <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+        <div className="flex items-center justify-between mb-6 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">
+          <h2 className="text-2xl font-bold text-slate-900">Search Contacts</h2>
+          <button
+            onClick={loadUpcomingBirthdays}
+            className="px-2 py-1.5 md:px-4 md:py-2 bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white text-xs md:text-base font-semibold rounded-lg transition-colors flex items-center gap-1 md:gap-2"
+          >
+            <Cake className="w-4 h-4 md:w-5 md:h-5" />
+            <span className="hidden sm:inline">Upcoming Birthdays</span>
+            <span className="sm:hidden">Birthdays</span>
+          </button>
+        </div>
 
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
         <p className="text-sm text-blue-900">
@@ -773,6 +874,133 @@ export function ContactSearch() {
           onClose={() => setToast(null)}
         />
       )}
-    </div>
+
+      {showUpcomingBirthdays && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-gradient-to-r from-pink-500 to-purple-500 text-white">
+              <div className="flex items-center gap-3">
+                <Cake className="w-6 h-6" />
+                <h2 className="text-xl font-bold">Upcoming Birthdays (Next 5 Days)</h2>
+              </div>
+              <button
+                onClick={() => setShowUpcomingBirthdays(false)}
+                className="p-1 hover:bg-white/20 rounded transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {upcomingBirthdays.length === 0 ? (
+                <div className="text-center py-12">
+                  <Cake className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                  <p className="text-slate-600 text-lg">No upcoming birthdays in the next 5 days</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {upcomingBirthdays.map((contact) => {
+                    const Icon = typeIcons[contact.type as keyof typeof typeIcons];
+
+                    const [year, month, day] = contact.birthday!.split('-').map(Number);
+                    const birthdayDate = new Date(year, month - 1, day);
+                    const today = getESTToday();
+
+                    let daysUntil = 0;
+                    for (let i = 0; i <= 5; i++) {
+                      const checkDate = new Date(today);
+                      checkDate.setDate(today.getDate() + i);
+                      if (
+                        birthdayDate.getMonth() === checkDate.getMonth() &&
+                        birthdayDate.getDate() === checkDate.getDate()
+                      ) {
+                        daysUntil = i;
+                        break;
+                      }
+                    }
+
+                    const getDaysLabel = (days: number) => {
+                      if (days === 0) return 'Today';
+                      if (days === 1) return 'Tomorrow';
+                      return `In ${days} days`;
+                    };
+
+                    const formattedDate = birthdayDate.toLocaleDateString('en-US', {
+                      month: 'long',
+                      day: 'numeric'
+                    });
+
+                    return (
+                      <div
+                        key={contact.id}
+                        className={`p-4 rounded-lg border-2 transition-all ${
+                          daysUntil === 0
+                            ? 'border-pink-500 bg-pink-50'
+                            : daysUntil === 1
+                            ? 'border-purple-400 bg-purple-50'
+                            : 'border-slate-200 bg-white hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className={`rounded-lg p-2 ${
+                            daysUntil === 0
+                              ? 'bg-pink-100'
+                              : daysUntil === 1
+                              ? 'bg-purple-100'
+                              : 'bg-slate-100'
+                          }`}>
+                            <Icon className={`w-5 h-5 ${
+                              daysUntil === 0
+                                ? 'text-pink-600'
+                                : daysUntil === 1
+                                ? 'text-purple-600'
+                                : 'text-slate-600'
+                            }`} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-1">
+                              <h3 className="font-semibold text-slate-900">{contact.name}</h3>
+                              <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                                daysUntil === 0
+                                  ? 'bg-pink-500 text-white'
+                                  : daysUntil === 1
+                                  ? 'bg-purple-500 text-white'
+                                  : 'bg-slate-200 text-slate-700'
+                              }`}>
+                                {getDaysLabel(daysUntil)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">
+                                {typeLabels[contact.type as keyof typeof typeLabels]}
+                              </span>
+                              <span>•</span>
+                              <span className="flex items-center gap-1">
+                                <Cake className="w-4 h-4" />
+                                {formattedDate}
+                              </span>
+                            </div>
+                            {contact.company && (
+                              <div className="mt-1 text-sm text-slate-600">
+                                {contact.company}
+                              </div>
+                            )}
+                            {contact.email && (
+                              <div className="mt-1 text-sm text-slate-600">
+                                {contact.email}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </>
   );
 }

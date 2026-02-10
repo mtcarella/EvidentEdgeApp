@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, Edit2, Trash2, Upload, DollarSign, FileArchive } from 'lucide-react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, Edit2, Trash2, Upload, DollarSign, FileArchive, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString, getESTToday, formatDateWithWeekday, formatDateShort } from '../lib/dateUtils';
+import { convertToJpeg, isImageFile } from '../lib/imageUtils';
 
 interface MeetingLog {
   id: string;
@@ -63,6 +64,18 @@ export function MeetingLogsReport() {
     expense_amount: '',
     receipt_file: null as File | null,
   });
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+  const [previewReceiptFilename, setPreviewReceiptFilename] = useState<string | null>(null);
+  const [previewMeetingInfo, setPreviewMeetingInfo] = useState<{ contactName: string; date: string } | null>(null);
+
+  const closePreviewModal = () => {
+    if (previewReceiptUrl) {
+      URL.revokeObjectURL(previewReceiptUrl);
+    }
+    setPreviewReceiptUrl(null);
+    setPreviewReceiptFilename(null);
+    setPreviewMeetingInfo(null);
+  };
 
   useEffect(() => {
     if (isAdmin) {
@@ -176,13 +189,31 @@ export function MeetingLogsReport() {
 
       // Upload new receipt if exists
       if (editFormData.receipt_file) {
-        const fileExt = editFormData.receipt_file.name.split('.').pop();
-        const fileName = `${salesPerson.user_id}_${Date.now()}.${fileExt}`;
+        let fileToUpload = editFormData.receipt_file;
+
+        // Check if it's an image that needs conversion
+        const fileExtension = '.' + editFormData.receipt_file.name.split('.').pop()?.toLowerCase();
+        const isImage = editFormData.receipt_file.type.startsWith('image/');
+
+        if (isImage) {
+          if (isImageFile(editFormData.receipt_file)) {
+            try {
+              fileToUpload = await convertToJpeg(editFormData.receipt_file);
+            } catch (error) {
+              console.error('Failed to convert image to JPEG:', error);
+              throw error instanceof Error ? error : new Error('Failed to process receipt image. Please try again.');
+            }
+          } else {
+            throw new Error(`RAW image format ${fileExtension.toUpperCase()} is not supported. Please convert to JPG, PNG, or another standard format first.`);
+          }
+        }
+
+        const fileName = `${salesPerson.user_id}_${Date.now()}.jpeg`;
         const filePath = `${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('receipts')
-          .upload(filePath, editFormData.receipt_file);
+          .upload(filePath, fileToUpload);
 
         if (uploadError) throw uploadError;
         receiptUrl = filePath;
@@ -239,6 +270,41 @@ export function MeetingLogsReport() {
     } catch (error) {
       console.error('Error deleting meeting:', error);
       alert('Failed to delete meeting');
+    }
+  };
+
+  const handleViewReceipt = async (meeting: MeetingLog) => {
+    if (!meeting.receipt_url) return;
+
+    try {
+      const { data: fileData, error } = await supabase.storage
+        .from('receipts')
+        .download(meeting.receipt_url);
+
+      if (error) {
+        console.error('Error downloading receipt:', error);
+        alert('Failed to load receipt. Please try again.');
+        return;
+      }
+
+      if (fileData) {
+        // Revoke previous blob URL if exists
+        if (previewReceiptUrl) {
+          URL.revokeObjectURL(previewReceiptUrl);
+        }
+
+        const blobUrl = URL.createObjectURL(fileData);
+        const filename = meeting.receipt_url.split('/').pop() || 'receipt';
+        setPreviewReceiptUrl(blobUrl);
+        setPreviewReceiptFilename(filename);
+        setPreviewMeetingInfo({
+          contactName: meeting.contact.name,
+          date: formatDateWithWeekday(meeting.meeting_date),
+        });
+      }
+    } catch (error) {
+      console.error('Error loading receipt:', error);
+      alert('Failed to load receipt. Please try again.');
     }
   };
 
@@ -319,21 +385,22 @@ export function MeetingLogsReport() {
 
       for (const meeting of meetingsWithReceipts) {
         try {
-          const { data: signedUrlData } = await supabase.storage
+          const { data: fileData, error: downloadError } = await supabase.storage
             .from('receipts')
-            .createSignedUrl(meeting.receipt_url!, 3600);
+            .download(meeting.receipt_url!);
 
-          if (signedUrlData?.signedUrl) {
-            const response = await fetch(signedUrlData.signedUrl);
-            const blob = await response.blob();
+          if (downloadError) {
+            throw downloadError;
+          }
 
+          if (fileData) {
             const fileExtension = meeting.receipt_url!.split('.').pop() || 'jpg';
             const meetingDate = new Date(meeting.meeting_date);
             const month = String(meetingDate.getMonth() + 1).padStart(2, '0');
             const year = meetingDate.getFullYear();
             const fileName = `${month}-${year}_${meeting.salesperson.name.replace(/\s+/g, '_')}_${meeting.contact.name.replace(/\s+/g, '_')}.${fileExtension}`;
 
-            zip.file(fileName, blob);
+            zip.file(fileName, fileData);
             successCount++;
           }
         } catch (error) {
@@ -399,7 +466,7 @@ export function MeetingLogsReport() {
           <div className="flex items-center gap-3">
             <Calendar className="w-6 h-6 text-blue-600" />
             <div>
-              <h2 className="text-2xl font-bold text-slate-900">Meeting Logs Report</h2>
+              <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Meeting Logs Report</h2>
               <p className="text-sm text-slate-600 mt-1">
                 Track salesperson meeting activities and notes
               </p>
@@ -651,17 +718,10 @@ export function MeetingLogsReport() {
                             )}
                             {meeting.receipt_url ? (
                               <button
-                                onClick={async () => {
-                                  const { data } = await supabase.storage
-                                    .from('receipts')
-                                    .createSignedUrl(meeting.receipt_url!, 60);
-                                  if (data?.signedUrl) {
-                                    window.open(data.signedUrl, '_blank');
-                                  }
-                                }}
+                                onClick={() => handleViewReceipt(meeting)}
                                 className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors font-medium text-sm"
                               >
-                                <Download className="w-4 h-4" />
+                                <Eye className="w-4 h-4" />
                                 View Receipt
                               </button>
                             ) : (
@@ -855,6 +915,62 @@ export function MeetingLogsReport() {
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
               >
                 Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewReceiptUrl && previewMeetingInfo && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[95vh] flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-yellow-50 to-slate-50 flex items-center justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">Receipt Preview</h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  {previewMeetingInfo.contactName} - {previewMeetingInfo.date}
+                </p>
+              </div>
+              <button
+                onClick={closePreviewModal}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-6 h-6 text-slate-600" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-hidden bg-slate-100 p-4">
+              {previewReceiptUrl.toLowerCase().endsWith('.pdf') ? (
+                <iframe
+                  src={previewReceiptUrl}
+                  className="w-full h-full border-0 rounded-lg bg-white"
+                  title="Receipt Preview"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <img
+                    src={previewReceiptUrl}
+                    alt="Receipt"
+                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-between items-center bg-slate-50">
+              <a
+                href={previewReceiptUrl}
+                download={previewReceiptFilename || 'receipt'}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+              >
+                <Download className="w-4 h-4" />
+                Download Receipt
+              </a>
+              <button
+                onClick={closePreviewModal}
+                className="px-4 py-2 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

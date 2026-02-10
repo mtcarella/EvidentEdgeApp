@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
       throw new Error('Forbidden: Admin access required');
     }
 
-    const { name, email, password, role } = await req.json();
+    const { name, email, cell_phone, password, role } = await req.json();
 
     if (!name || !email || !password || !role) {
       throw new Error('Missing required fields');
@@ -69,6 +69,7 @@ Deno.serve(async (req: Request) => {
         user_id: authData.user.id,
         name,
         email,
+        cell_phone: cell_phone || null,
         role,
         is_active: true,
       })

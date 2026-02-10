@@ -8,7 +8,7 @@ echo Checking git status...
 git status
 
 echo.
-echo This will abort any in-progress rebase/merge and clean up your git state.
+echo This will abort any in-progress rebase and clean up your git state.
 echo.
 set /p confirm="Continue? (Y/N): "
 if /i not "%confirm%"=="Y" (
@@ -21,9 +21,6 @@ echo.
 echo Aborting any in-progress rebase...
 git rebase --abort 2>nul
 
-echo Aborting any in-progress merge...
-git merge --abort 2>nul
-
 echo.
 echo Cleaning up git state...
 if exist ".git\rebase-merge" (
@@ -31,20 +28,16 @@ if exist ".git\rebase-merge" (
     echo Removed rebase-merge directory
 )
 
-if exist ".git\MERGE_HEAD" (
-    del /f /q ".git\MERGE_HEAD"
-    echo Removed MERGE_HEAD file
-)
-
 echo.
-echo Adding all current files...
-git add .
+echo Resetting to remote state...
+git fetch origin main
+git reset --hard origin/main
 
 echo.
 echo ========================================
-echo   ✓ Git repository cleaned!
+echo   ✓ Git repository fixed!
 echo ========================================
 echo.
-echo Now run sync-with-github.bat to complete the sync.
+echo You can now run setup-and-deploy.bat again.
 echo.
 pause

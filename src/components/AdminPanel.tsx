@@ -88,6 +88,7 @@ export function AdminPanel() {
   const [newUserForm, setNewUserForm] = useState({
     name: '',
     email: '',
+    cell_phone: '',
     password: '',
     role: 'salesperson' as string,
   });
@@ -487,6 +488,7 @@ export function AdminPanel() {
           body: JSON.stringify({
             name: newUserForm.name,
             email: newUserForm.email,
+            cell_phone: newUserForm.cell_phone || null,
             password: newUserForm.password,
             role: newUserForm.role,
           }),
@@ -981,7 +983,7 @@ export function AdminPanel() {
     <div className="bg-white rounded-xl shadow-sm p-6">
       <div className="flex items-center gap-3 mb-6">
         <Database className="w-6 h-6 text-amber-600" />
-        <h2 className="text-2xl font-bold text-slate-900">Admin Database Management</h2>
+        <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Admin Database Management</h2>
       </div>
 
       <div className="flex gap-2 mb-6">
@@ -1493,6 +1495,19 @@ export function AdminPanel() {
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Enter email address"
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Cell Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={newUserForm.cell_phone}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, cell_phone: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="+12345678900 (E.164 format for SMS)"
+                  />
+                  <p className="text-xs text-slate-500 mt-1">Required for SMS notifications</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">

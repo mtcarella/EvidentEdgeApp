@@ -3,6 +3,7 @@ import { X, User, Mail, Phone, Building2, MapPin, FileText, Calendar, Plus, Edit
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateShort, formatDateWithWeekday, getTodayDateString } from '../lib/dateUtils';
+import { convertToJpeg, isImageFile } from '../lib/imageUtils';
 
 interface Contact {
   id: string;
@@ -170,13 +171,31 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       // Upload receipt if exists
       if (receiptFile) {
-        const fileExt = receiptFile.name.split('.').pop();
-        const fileName = `${salesPerson.user_id}_${Date.now()}.${fileExt}`;
+        let fileToUpload = receiptFile;
+
+        // Check if it's an image that needs conversion
+        const fileExtension = '.' + receiptFile.name.split('.').pop()?.toLowerCase();
+        const isImage = receiptFile.type.startsWith('image/');
+
+        if (isImage) {
+          if (isImageFile(receiptFile)) {
+            try {
+              fileToUpload = await convertToJpeg(receiptFile);
+            } catch (error) {
+              console.error('Failed to convert image to JPEG:', error);
+              throw error instanceof Error ? error : new Error('Failed to process receipt image. Please try again.');
+            }
+          } else {
+            throw new Error(`RAW image format ${fileExtension.toUpperCase()} is not supported. Please convert to JPG, PNG, or another standard format first.`);
+          }
+        }
+
+        const fileName = `${salesPerson.user_id}_${Date.now()}.jpeg`;
         const filePath = `${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('receipts')
-          .upload(filePath, receiptFile);
+          .upload(filePath, fileToUpload);
 
         if (uploadError) throw uploadError;
         receiptUrl = filePath;
@@ -257,13 +276,31 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       // Upload new receipt if exists
       if (editMeetingForm.receipt_file) {
-        const fileExt = editMeetingForm.receipt_file.name.split('.').pop();
-        const fileName = `${salesPerson?.user_id}_${Date.now()}.${fileExt}`;
+        let fileToUpload = editMeetingForm.receipt_file;
+
+        // Check if it's an image that needs conversion
+        const fileExtension = '.' + editMeetingForm.receipt_file.name.split('.').pop()?.toLowerCase();
+        const isImage = editMeetingForm.receipt_file.type.startsWith('image/');
+
+        if (isImage) {
+          if (isImageFile(editMeetingForm.receipt_file)) {
+            try {
+              fileToUpload = await convertToJpeg(editMeetingForm.receipt_file);
+            } catch (error) {
+              console.error('Failed to convert image to JPEG:', error);
+              throw error instanceof Error ? error : new Error('Failed to process receipt image. Please try again.');
+            }
+          } else {
+            throw new Error(`RAW image format ${fileExtension.toUpperCase()} is not supported. Please convert to JPG, PNG, or another standard format first.`);
+          }
+        }
+
+        const fileName = `${salesPerson?.user_id}_${Date.now()}.jpeg`;
         const filePath = `${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('receipts')
-          .upload(filePath, editMeetingForm.receipt_file);
+          .upload(filePath, fileToUpload);
 
         if (uploadError) throw uploadError;
         receiptUrl = filePath;
@@ -345,7 +382,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
       <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 my-8">
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 rounded-t-xl flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-slate-900">Contact Details</h2>
+          <h2 className="text-2xl font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Contact Details</h2>
           <button
             onClick={onClose}
             className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -1101,11 +1138,26 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                               {meeting.receipt_url && (
                                 <button
                                   onClick={async () => {
-                                    const { data } = await supabase.storage
-                                      .from('receipts')
-                                      .createSignedUrl(meeting.receipt_url!, 60);
-                                    if (data?.signedUrl) {
-                                      window.open(data.signedUrl, '_blank');
+                                    try {
+                                      const { data: fileData, error } = await supabase.storage
+                                        .from('receipts')
+                                        .download(meeting.receipt_url!);
+
+                                      if (error) {
+                                        console.error('Error downloading receipt:', error);
+                                        alert('Failed to load receipt. Please try again.');
+                                        return;
+                                      }
+
+                                      if (fileData) {
+                                        const blobUrl = URL.createObjectURL(fileData);
+                                        window.open(blobUrl, '_blank');
+                                        // Clean up blob URL after a delay
+                                        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+                                      }
+                                    } catch (error) {
+                                      console.error('Error loading receipt:', error);
+                                      alert('Failed to load receipt. Please try again.');
                                     }
                                   }}
                                   className="flex items-center gap-1 px-2 py-1 text-sm text-yellow-700 hover:bg-yellow-100 rounded transition-colors"
