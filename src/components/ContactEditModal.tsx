@@ -36,7 +36,8 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
   const canEditAdminFields = isAdminOrProcessor || hasAccess('edit_admin_fields');
 
   const [editForm, setEditForm] = useState({
-    name: contact.name || '',
+    first_name: contact.first_name || '',
+    last_name: contact.last_name || '',
     type: contact.type || 'buyer',
     email: contact.email || '',
     phone: contact.phone || '',
@@ -73,7 +74,8 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
 
       // Base data that all users can update
       const baseData = {
-        name: editForm.name,
+        first_name: editForm.first_name,
+        last_name: editForm.last_name,
         type: editForm.type,
         email: toNullIfEmpty(editForm.email),
         phone: toNullIfEmpty(editForm.phone),
@@ -229,12 +231,25 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
         <div className="p-6 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Name *</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">First Name *</label>
               <input
                 type="text"
-                value={editForm.name}
-                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                value={editForm.first_name}
+                onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+                maxLength={50}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Last Name *</label>
+              <input
+                type="text"
+                value={editForm.last_name}
+                onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+                maxLength={50}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
               />
             </div>
             <div>

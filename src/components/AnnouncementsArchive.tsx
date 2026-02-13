@@ -20,7 +20,7 @@ interface Announcement {
 const categoryConfig = {
   urgent: {
     icon: AlertTriangle,
-    label: 'Urgent',
+    label: 'Time Sensitive',
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
     textColor: 'text-red-700',
@@ -89,6 +89,7 @@ export function AnnouncementsArchive() {
           attachment_size
         `)
         .eq('is_active', true)
+        .order('is_pinned', { ascending: false })
         .order('created_at', { ascending: false });
 
       if (error) throw error;

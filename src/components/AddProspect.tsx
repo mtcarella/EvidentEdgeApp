@@ -6,7 +6,8 @@ import { formatContactData } from '../lib/formatters';
 import { checkForDuplicates, DuplicateContact } from '../lib/duplicateChecker';
 
 export function AddProspect() {
-  const [name, setName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [type, setType] = useState<'buyer' | 'realtor' | 'attorney' | 'loan_officer' | 'vendor'>('buyer');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -70,8 +71,8 @@ export function AddProspect() {
     try {
       const { data, error } = await supabase
         .from('contacts')
-        .select('id, name, type, email, phone, cell_phone, company, branch, address, paralegal, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
-        .or(`name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%`)
+        .select('id, name, first_name, last_name, type, email, phone, cell_phone, company, branch, address, paralegal, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
+        .or(`name.ilike.%${searchTerm}%,first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%`)
         .order('name')
         .limit(10);
 
@@ -86,7 +87,8 @@ export function AddProspect() {
   };
 
   const cloneContact = (contact: any) => {
-    setName('');
+    setFirstName('');
+    setLastName('');
     setEmail('');
     setType(contact.type);
     setPhone(contact.phone || '');
@@ -121,7 +123,8 @@ export function AddProspect() {
   }, [cloneSearchTerm]);
 
   const checkExisting = async () => {
-    if (!name.trim() && !email.trim()) {
+    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    if (!fullName && !email.trim()) {
       setDuplicates([]);
       return;
     }
@@ -129,7 +132,7 @@ export function AddProspect() {
     setChecking(true);
 
     try {
-      const found = await checkForDuplicates(name, email);
+      const found = await checkForDuplicates(fullName, email);
       setDuplicates(found);
     } catch (error) {
       console.error('Error checking duplicates:', error);
@@ -139,16 +142,9 @@ export function AddProspect() {
     }
   };
 
-  const handleNameChange = (value: string) => {
-    setName(value);
-  };
-
-  const handleEmailChange = (value: string) => {
-    setEmail(value);
-  };
-
   useEffect(() => {
-    if (name.length >= 3 || email.length > 0) {
+    const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    if (fullName.length >= 3 || email.length > 0) {
       const timer = setTimeout(() => {
         checkExisting();
       }, 500);
@@ -156,7 +152,7 @@ export function AddProspect() {
     } else {
       setDuplicates([]);
     }
-  }, [name, email]);
+  }, [firstName, lastName, email]);
 
   const handleTypeChange = (newType: 'buyer' | 'realtor' | 'attorney' | 'loan_officer' | 'vendor') => {
     setType(newType);
@@ -186,7 +182,8 @@ export function AddProspect() {
       }
 
       const formattedData = formatContactData({
-        name,
+        first_name: firstName || null,
+        last_name: lastName || null,
         email: email || null,
         phone: phone || null,
         cell_phone: cellPhone || null,
@@ -275,7 +272,8 @@ export function AddProspect() {
       }
 
       setSuccess(true);
-      setName('');
+      setFirstName('');
+      setLastName('');
       setEmail('');
       setPhone('');
       setCellPhone('');
@@ -366,37 +364,56 @@ export function AddProspect() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div>
-          <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-2">
-            Name *
-          </label>
-          <input
-            id="name"
-            type="text"
-            value={name}
-            onChange={(e) => handleNameChange(e.target.value)}
-            className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-            required
-          />
-          {checking && (
-            <p className="text-sm text-slate-500 mt-1">Checking for duplicates...</p>
-          )}
-          {duplicates.length > 0 && (
-            <div className="mt-2 space-y-2">
-              {duplicates.map((dup, idx) => (
-                <div key={idx} className="flex items-start gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p>
-                      <strong>{dup.name}</strong> ({dup.type}) - This contact will be updated with new information
-                    </p>
-                    {dup.email && <p className="text-xs">{dup.email}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div>
+            <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 mb-2">
+              First Name *
+            </label>
+            <input
+              id="firstName"
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              maxLength={50}
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 mb-2">
+              Last Name *
+            </label>
+            <input
+              id="lastName"
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              maxLength={50}
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              required
+            />
+          </div>
         </div>
+
+        {checking && (
+          <p className="text-sm text-slate-500">Checking for duplicates...</p>
+        )}
+        {duplicates.length > 0 && (
+          <div className="space-y-2">
+            {duplicates.map((dup, idx) => (
+              <div key={idx} className="flex items-start gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p>
+                    <strong>{dup.name}</strong> ({dup.type}) - This contact will be updated with new information
+                  </p>
+                  {dup.email && <p className="text-xs">{dup.email}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div>
           <label htmlFor="type" className="block text-sm font-medium text-slate-700 mb-2">

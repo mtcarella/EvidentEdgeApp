@@ -23,8 +23,10 @@ import ContactExecutive from './ContactExecutive';
 import { Announcements } from './Announcements';
 import { AnnouncementsArchive } from './AnnouncementsArchive';
 import { AnnouncementsAdmin } from './AnnouncementsAdmin';
+import EmployeeCommunication from './EmployeeCommunication';
+import { LoginAnnouncementsModal } from './LoginAnnouncementsModal';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
@@ -36,7 +38,19 @@ export function Dashboard() {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [showContactExecutive, setShowContactExecutive] = useState(false);
+  const [showLoginAnnouncements, setShowLoginAnnouncements] = useState(false);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (user && salesPerson) {
+      const sessionKey = `announcements_shown_${user.id}`;
+      const alreadyShown = sessionStorage.getItem(sessionKey);
+      if (!alreadyShown) {
+        setShowLoginAnnouncements(true);
+        sessionStorage.setItem(sessionKey, 'true');
+      }
+    }
+  }, [user, salesPerson]);
 
   const getGreeting = () => {
     const hour = nowInEST().getHours();
@@ -74,6 +88,7 @@ export function Dashboard() {
     { id: 'add' as Tab, label: 'Add Prospect', icon: UserPlus, module: 'add_prospect', color: 'text-cyan-600' },
     { id: 'admin' as Tab, label: 'Admin Panel', icon: Database, module: 'admin_panel', color: 'text-rose-600' },
     { id: 'announcements-admin' as Tab, label: 'Manage Announcements', icon: Megaphone, module: 'manage_announcements', color: 'text-teal-600' },
+    { id: 'employee-communication' as Tab, label: 'Employee Communication', icon: Mail, module: 'employee_communication', color: 'text-purple-600' },
     { id: 'rewards' as Tab, label: 'Rewards Report', icon: Award, module: 'closer_rewards_report', color: 'text-yellow-600' },
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
     { id: 'import' as Tab, label: 'Batch Import Contact Data', icon: Upload, module: 'import_data', color: 'text-violet-600' },
@@ -350,6 +365,7 @@ export function Dashboard() {
         {activeTab === 'meetings' && hasAccess('meeting_logs_report') && <MeetingLogsReport />}
         {activeTab === 'announcements' && hasAccess('announcements') && <AnnouncementsArchive />}
         {activeTab === 'announcements-admin' && hasAccess('manage_announcements') && <AnnouncementsAdmin />}
+        {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
       </main>
@@ -435,6 +451,10 @@ export function Dashboard() {
         isOpen={showContactExecutive}
         onClose={() => setShowContactExecutive(false)}
       />
+
+      {showLoginAnnouncements && (
+        <LoginAnnouncementsModal onClose={() => setShowLoginAnnouncements(false)} />
+      )}
     </div>
   );
 }
