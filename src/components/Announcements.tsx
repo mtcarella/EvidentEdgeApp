@@ -25,7 +25,7 @@ interface AnnouncementRead {
 const categoryConfig = {
   urgent: {
     icon: AlertTriangle,
-    label: 'Time Sensitive',
+    label: 'Urgent',
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
     textColor: 'text-red-700',

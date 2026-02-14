@@ -23,7 +23,7 @@ interface Announcement {
 const categoryConfig = {
   urgent: {
     icon: AlertTriangle,
-    label: 'Time Sensitive',
+    label: 'Urgent',
     description: 'Time-sensitive updates requiring immediate attention',
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
@@ -79,7 +79,6 @@ export function AnnouncementsAdmin() {
       const { data, error } = await supabase
         .from('announcements')
         .select('*')
-        .order('is_pinned', { ascending: false })
         .order('created_at', { ascending: false });
 
       if (error) throw error;
