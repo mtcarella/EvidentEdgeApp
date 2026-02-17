@@ -208,7 +208,11 @@ export function MyContacts() {
       return;
     }
 
-    window.location.href = `mailto:?bcc=${selectedEmails.join(',')}`;
+    const isWindows = navigator.platform.toLowerCase().includes('win') ||
+      navigator.userAgent.toLowerCase().includes('windows');
+    const separator = isWindows ? ';' : ',';
+    const encodedEmails = selectedEmails.map(email => encodeURIComponent(email as string)).join(separator);
+    window.location.href = `mailto:?bcc=${encodedEmails}`;
   };
 
   const exportMyContacts = async () => {

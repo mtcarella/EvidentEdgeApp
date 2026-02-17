@@ -7,7 +7,7 @@ interface Announcement {
   id: string;
   title: string;
   content: string;
-  category: 'urgent' | 'informational' | 'procedural';
+  category: 'time sensitive' | 'informational' | 'procedural';
   is_pinned: boolean;
   created_at: string;
   attachment_name?: string | null;
@@ -16,7 +16,7 @@ interface Announcement {
 }
 
 const categoryConfig = {
-  urgent: {
+  'time sensitive': {
     icon: AlertTriangle,
     label: 'Time Sensitive',
     bgGradient: 'from-red-500 to-red-600',
@@ -99,7 +99,7 @@ export function LoginAnnouncementsModal({ onClose }: LoginAnnouncementsModalProp
       const unread = (allAnnouncements || []).filter(a => !readSet.has(a.id));
 
       const sortedUnread = unread.sort((a, b) => {
-        const priorityOrder = { urgent: 0, procedural: 1, informational: 2 };
+        const priorityOrder = { 'time sensitive': 0, procedural: 1, informational: 2 };
         if (a.is_pinned && !b.is_pinned) return -1;
         if (!a.is_pinned && b.is_pinned) return 1;
         return priorityOrder[a.category] - priorityOrder[b.category];
@@ -368,7 +368,7 @@ export function LoginAnnouncementsModal({ onClose }: LoginAnnouncementsModalProp
             )}
             <button
               onClick={handleNext}
-              className={`flex items-center gap-2 px-5 py-2.5 ${config.buttonBg} text-white rounded-xl transition-colors font-medium shadow-lg shadow-${currentAnnouncement.category === 'urgent' ? 'red' : currentAnnouncement.category === 'informational' ? 'blue' : 'amber'}-500/25`}
+              className={`flex items-center gap-2 px-5 py-2.5 ${config.buttonBg} text-white rounded-xl transition-colors font-medium shadow-lg shadow-${currentAnnouncement.category === 'time sensitive' ? 'red' : currentAnnouncement.category === 'informational' ? 'blue' : 'amber'}-500/25`}
             >
               {currentIndex === announcements.length - 1 ? (
                 <>

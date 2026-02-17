@@ -7,7 +7,7 @@ interface Announcement {
   id: string;
   title: string;
   content: string;
-  category: 'urgent' | 'informational' | 'procedural';
+  category: 'time sensitive' | 'informational' | 'procedural';
   is_active: boolean;
   is_pinned: boolean;
   created_at: string;
@@ -21,9 +21,9 @@ interface Announcement {
 }
 
 const categoryConfig = {
-  urgent: {
+  'time sensitive': {
     icon: AlertTriangle,
-    label: 'Urgent',
+    label: 'Time Sensitive',
     description: 'Time-sensitive updates requiring immediate attention',
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
@@ -61,7 +61,7 @@ export function AnnouncementsAdmin() {
   const [formData, setFormData] = useState({
     title: '',
     content: '',
-    category: 'informational' as 'urgent' | 'informational' | 'procedural',
+    category: 'informational' as 'time sensitive' | 'informational' | 'procedural',
     is_pinned: false,
     expires_at: '',
   });
@@ -558,7 +558,7 @@ export function AnnouncementsAdmin() {
                       <button
                         key={key}
                         type="button"
-                        onClick={() => setFormData({ ...formData, category: key as 'urgent' | 'informational' | 'procedural' })}
+                        onClick={() => setFormData({ ...formData, category: key as 'time sensitive' | 'informational' | 'procedural' })}
                         className={`p-3 rounded-lg border-2 text-left transition-all ${
                           formData.category === key
                             ? `${config.borderColor} ${config.bgColor}`

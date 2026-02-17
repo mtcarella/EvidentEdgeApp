@@ -7,7 +7,7 @@ interface Announcement {
   id: string;
   title: string;
   content: string;
-  category: 'urgent' | 'informational' | 'procedural';
+  category: 'time sensitive' | 'informational' | 'procedural';
   is_pinned: boolean;
   created_at: string;
   created_by: string;
@@ -18,9 +18,9 @@ interface Announcement {
 }
 
 const categoryConfig = {
-  urgent: {
+  'time sensitive': {
     icon: AlertTriangle,
-    label: 'Urgent',
+    label: 'Time Sensitive',
     bgColor: 'bg-red-50',
     borderColor: 'border-red-200',
     textColor: 'text-red-700',
