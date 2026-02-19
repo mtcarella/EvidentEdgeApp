@@ -1,8 +1,25 @@
 import { useState, useEffect } from 'react';
-import { FileText, Upload, Trash2, Download, Loader, AlertCircle, ChevronDown, ChevronUp, Eye, X, Edit } from 'lucide-react';
+import { FileText, Upload, Trash2, Download, Loader, AlertCircle, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
+import { Toast } from './Toast';
+
+interface Contact {
+  id: string;
+  first_name: string;
+  last_name: string;
+  company: string;
+  email: string;
+}
+
+interface UserGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  member_count: number;
+  member_emails: string[];
+}
 
 interface Resource {
   id: string;
@@ -38,6 +55,18 @@ export function Resources() {
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [editCategory, setEditCategory] = useState<Category>('Evident Edge Tutorials');
   const [editLoading, setEditLoading] = useState(false);
+  const [emailResource, setEmailResource] = useState<Resource | null>(null);
+  const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [manualEmail, setManualEmail] = useState('');
+  const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [users, setUsers] = useState<Array<{ id: string; user_id: string; name: string; email: string }>>([]);
+  const [myContacts, setMyContacts] = useState<Contact[]>([]);
+  const [contactSearchTerm, setContactSearchTerm] = useState('');
+  const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [uploadForm, setUploadForm] = useState<{
     title: string;
     category: Category;
@@ -50,7 +79,82 @@ export function Resources() {
 
   useEffect(() => {
     fetchResources();
+    fetchUsers();
+    fetchUserGroups();
   }, []);
+
+  useEffect(() => {
+    if (salesPerson?.id) {
+      fetchMyContacts();
+    }
+  }, [salesPerson?.id]);
+
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from('sales_people')
+      .select('id, user_id, name, email')
+      .eq('is_active', true)
+      .order('name');
+
+    if (!error && data) {
+      setUsers(data);
+    }
+  };
+
+  const fetchUserGroups = async () => {
+    const { data: groups, error: groupsError } = await supabase
+      .from('user_groups')
+      .select('id, name, description')
+      .order('name');
+
+    if (groupsError || !groups) return;
+
+    const groupsWithMembers: UserGroup[] = await Promise.all(
+      groups.map(async (group) => {
+        const { data: members } = await supabase
+          .from('user_group_members')
+          .select('user_id')
+          .eq('group_id', group.id);
+
+        const userIds = members?.map(m => m.user_id) || [];
+
+        const { data: salesPeopleData } = await supabase
+          .from('sales_people')
+          .select('email')
+          .in('user_id', userIds.length > 0 ? userIds : ['00000000-0000-0000-0000-000000000000'])
+          .eq('is_active', true);
+
+        const emails = salesPeopleData?.map(sp => sp.email).filter(Boolean) || [];
+
+        return {
+          id: group.id,
+          name: group.name,
+          description: group.description,
+          member_count: emails.length,
+          member_emails: emails
+        };
+      })
+    );
+
+    setUserGroups(groupsWithMembers);
+  };
+
+  const fetchMyContacts = async () => {
+    if (!salesPerson?.id) return;
+
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, first_name, last_name, company, email')
+      .eq('assigned_to', salesPerson.id)
+      .not('email', 'is', null)
+      .neq('email', '')
+      .order('last_name')
+      .order('first_name');
+
+    if (!error && data) {
+      setMyContacts(data);
+    }
+  };
 
   const fetchResources = async () => {
     try {
@@ -300,6 +404,132 @@ export function Resources() {
     }
   };
 
+  const handleEmailClick = (resource: Resource) => {
+    setEmailResource(resource);
+    setEmailSubject(`Document: ${resource.title}`);
+    setEmailMessage(`Please find the attached document "${resource.title}" from Evident Title.\n\nIf you have any questions, feel free to reach out.`);
+    setEmailRecipients([]);
+    setManualEmail('');
+    setUserSearchTerm('');
+  };
+
+  const handleEmailCancel = () => {
+    setEmailResource(null);
+    setEmailSubject('');
+    setEmailMessage('');
+    setEmailRecipients([]);
+    setManualEmail('');
+    setUserSearchTerm('');
+    setContactSearchTerm('');
+  };
+
+  const handleAddManualEmail = () => {
+    const trimmedEmail = manualEmail.trim().toLowerCase();
+    if (trimmedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) && !emailRecipients.includes(trimmedEmail)) {
+      setEmailRecipients([...emailRecipients, trimmedEmail]);
+      setManualEmail('');
+    }
+  };
+
+  const handleRemoveRecipient = (email: string) => {
+    setEmailRecipients(emailRecipients.filter(e => e !== email));
+  };
+
+  const handleAddUserEmail = (email: string) => {
+    const lowercaseEmail = email.toLowerCase();
+    if (!emailRecipients.includes(lowercaseEmail)) {
+      setEmailRecipients([...emailRecipients, lowercaseEmail]);
+    }
+  };
+
+  const handleAddGroupEmails = (group: UserGroup) => {
+    const newEmails = group.member_emails
+      .map(e => e.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (newEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...newEmails]);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!emailResource || emailRecipients.length === 0) {
+      setNotification({ type: 'error', message: 'Please add at least one recipient' });
+      return;
+    }
+
+    if (!emailSubject.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a subject' });
+      return;
+    }
+
+    if (!emailMessage.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a message' });
+      return;
+    }
+
+    setEmailSending(true);
+
+    try {
+      const { data: senderData } = await supabase
+        .from('sales_people')
+        .select('email')
+        .eq('id', salesPerson?.id)
+        .maybeSingle();
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/email-resource`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            resourceId: emailResource.id,
+            recipientEmails: emailRecipients,
+            subject: emailSubject,
+            message: emailMessage,
+            senderEmail: senderData?.email
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send email');
+      }
+
+      if (result.sent > 0) {
+        setNotification({
+          type: 'success',
+          message: `Document sent successfully to ${result.sent} recipient${result.sent > 1 ? 's' : ''}!`
+        });
+        handleEmailCancel();
+      } else {
+        throw new Error('Failed to send email to any recipients');
+      }
+    } catch (error) {
+      console.error('Error sending email:', error);
+      setNotification({ type: 'error', message: error instanceof Error ? error.message : 'Failed to send email' });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const filteredEmailUsers = users.filter(u =>
+    u.name.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+    u.email.toLowerCase().includes(userSearchTerm.toLowerCase())
+  );
+
+  const filteredContacts = myContacts.filter(c =>
+    c.first_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.last_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.company.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.email.toLowerCase().includes(contactSearchTerm.toLowerCase())
+  );
+
   const toggleCategory = (category: string) => {
     const newExpanded = new Set(expandedCategories);
     if (newExpanded.has(category)) {
@@ -466,6 +696,13 @@ export function Resources() {
                             >
                               <Download className="h-5 w-5" />
                             </button>
+                            <button
+                              onClick={() => handleEmailClick(resource)}
+                              className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                              title="Email Document"
+                            >
+                              <Mail className="h-5 w-5" />
+                            </button>
                             {isAdmin && (
                               <>
                                 <button
@@ -597,6 +834,278 @@ export function Resources() {
             </div>
           </div>
         </div>
+      )}
+
+      {emailResource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Mail className="h-5 w-5 text-amber-600" />
+                Email Document
+              </h3>
+              <button
+                onClick={handleEmailCancel}
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-8 w-8 text-blue-600" />
+                  <div>
+                    <p className="font-medium text-gray-900">{emailResource.title}</p>
+                    <p className="text-sm text-gray-600">{formatFileSize(emailResource.file_size)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Recipients
+                </label>
+
+                {emailRecipients.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {emailRecipients.map(email => (
+                      <span
+                        key={email}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
+                      >
+                        {email}
+                        <button
+                          onClick={() => handleRemoveRecipient(email)}
+                          className="hover:text-blue-900"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm text-gray-600 mb-1 block">Add external email</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        value={manualEmail}
+                        onChange={(e) => setManualEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddManualEmail();
+                          }
+                        }}
+                        placeholder="client@example.com"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <button
+                        onClick={handleAddManualEmail}
+                        disabled={!manualEmail.trim()}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  {myContacts.length > 0 && (
+                    <div>
+                      <label className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        My Contacts ({myContacts.length})
+                      </label>
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                        <input
+                          type="text"
+                          placeholder="Search contacts..."
+                          value={contactSearchTerm}
+                          onChange={(e) => setContactSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto">
+                        {filteredContacts.length === 0 ? (
+                          <div className="p-3 text-center text-gray-500 text-sm">
+                            No contacts found
+                          </div>
+                        ) : (
+                          filteredContacts.map(contact => (
+                            <button
+                              key={contact.id}
+                              onClick={() => handleAddUserEmail(contact.email)}
+                              disabled={emailRecipients.includes(contact.email.toLowerCase())}
+                              className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                                emailRecipients.includes(contact.email.toLowerCase()) ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {contact.first_name} {contact.last_name}
+                                </div>
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                  <Building className="w-3 h-3 flex-shrink-0" />
+                                  <span className="truncate">{contact.company}</span>
+                                </div>
+                                <div className="text-sm text-gray-500 truncate">{contact.email}</div>
+                              </div>
+                              {emailRecipients.includes(contact.email.toLowerCase()) && (
+                                <span className="text-xs text-green-600 font-medium flex-shrink-0 ml-2">Added</span>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {userGroups.length > 0 && (
+                    <div>
+                      <label className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        Groups ({userGroups.length})
+                      </label>
+                      <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto">
+                        {userGroups.map(group => {
+                          const allAdded = group.member_emails.every(e =>
+                            emailRecipients.includes(e.toLowerCase())
+                          );
+                          const someAdded = group.member_emails.some(e =>
+                            emailRecipients.includes(e.toLowerCase())
+                          );
+                          return (
+                            <button
+                              key={group.id}
+                              onClick={() => handleAddGroupEmails(group)}
+                              disabled={allAdded || group.member_count === 0}
+                              className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                                allAdded ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {group.name}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {group.member_count} member{group.member_count !== 1 ? 's' : ''}
+                                  {group.description && ` - ${group.description}`}
+                                </div>
+                              </div>
+                              {allAdded ? (
+                                <span className="text-xs text-green-600 font-medium flex-shrink-0 ml-2">All Added</span>
+                              ) : someAdded ? (
+                                <span className="text-xs text-amber-600 font-medium flex-shrink-0 ml-2">Partial</span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-sm text-gray-600 mb-1 block">Team members</label>
+                    <div className="relative mb-2">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <input
+                        type="text"
+                        placeholder="Search team members..."
+                        value={userSearchTerm}
+                        onChange={(e) => setUserSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div className="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                      {filteredEmailUsers.map(u => (
+                        <button
+                          key={u.id}
+                          onClick={() => handleAddUserEmail(u.email)}
+                          disabled={emailRecipients.includes(u.email.toLowerCase())}
+                          className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors ${
+                            emailRecipients.includes(u.email.toLowerCase()) ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{u.name}</div>
+                            <div className="text-sm text-gray-500">{u.email}</div>
+                          </div>
+                          {emailRecipients.includes(u.email.toLowerCase()) && (
+                            <span className="text-xs text-green-600 font-medium">Added</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Message
+                </label>
+                <textarea
+                  value={emailMessage}
+                  onChange={(e) => setEmailMessage(e.target.value)}
+                  rows={5}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4 flex gap-3">
+              <button
+                onClick={handleEmailCancel}
+                disabled={emailSending}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendEmail}
+                disabled={emailSending || emailRecipients.length === 0}
+                className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {emailSending ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="h-4 w-4" />
+                    Send Email
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notification && (
+        <Toast
+          type={notification.type}
+          message={notification.message}
+          onClose={() => setNotification(null)}
+        />
       )}
     </div>
   );

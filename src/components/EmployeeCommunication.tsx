@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Send, Users, Mail, MessageSquare, Plus, X, Edit2, Trash2, UserPlus, UserMinus, CheckCircle, AlertCircle, Search, Clock } from 'lucide-react';
+import { Send, Users, Mail, MessageSquare, Plus, X, Edit2, Trash2, UserPlus, UserMinus, Search, Clock, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { Toast } from './Toast';
+import ContactExecutive from './ContactExecutive';
 
 interface User {
   id: string;
@@ -43,11 +45,11 @@ interface CommunicationLog {
   sender_name?: string;
 }
 
-type Tab = 'send' | 'groups' | 'history';
+type Tab = 'groups' | 'history';
 
 export default function EmployeeCommunication() {
-  const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState<Tab>('send');
+  const { user, salesPerson } = useAuth();
+  const [activeTab, setActiveTab] = useState<Tab>('groups');
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<UserGroup[]>([]);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
@@ -70,6 +72,12 @@ export default function EmployeeCommunication() {
   // Communication history
   const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+
+  // Contact Executive modal
+  const [showContactExecutive, setShowContactExecutive] = useState(false);
+
+  // Check if user is admin or super admin
+  const isAdminOrSuperAdmin = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
 
   useEffect(() => {
     fetchUsers();
@@ -258,6 +266,13 @@ export default function EmployeeCommunication() {
         })
       );
 
+      // Get sender's email
+      const { data: senderData } = await supabase
+        .from('sales_people')
+        .select('email')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+
       // Call edge function to send messages
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(
@@ -272,7 +287,8 @@ export default function EmployeeCommunication() {
             type: communicationType,
             recipients: recipientDetails,
             subject: communicationType === 'email' ? subject : undefined,
-            message: message
+            message: message,
+            senderEmail: senderData?.email
           })
         }
       );
@@ -467,43 +483,51 @@ export default function EmployeeCommunication() {
     }).join(', ');
   };
 
+  const handleDeleteCommunicationLog = async (logId: string) => {
+    if (!confirm('Are you sure you want to delete this communication log? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('communication_logs')
+        .delete()
+        .eq('id', logId);
+
+      if (error) throw error;
+
+      setNotification({ type: 'success', message: 'Communication log deleted successfully' });
+      setCommunicationLogs(prev => prev.filter(log => log.id !== logId));
+    } catch (error) {
+      console.error('Error deleting communication log:', error);
+      setNotification({ type: 'error', message: 'Failed to delete communication log' });
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto">
       {notification && (
-        <div className={`mb-4 p-4 rounded-lg flex items-center gap-3 ${
-          notification.type === 'success' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-        }`}>
-          {notification.type === 'success' ? (
-            <CheckCircle className="w-5 h-5 text-green-600" />
-          ) : (
-            <AlertCircle className="w-5 h-5 text-red-600" />
-          )}
-          <span className={notification.type === 'success' ? 'text-green-800' : 'text-red-800'}>
-            {notification.message}
-          </span>
-          <button
-            onClick={() => setNotification(null)}
-            className="ml-auto text-slate-400 hover:text-slate-600"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        <Toast
+          message={notification.message}
+          type={notification.type}
+          onClose={() => setNotification(null)}
+          duration={5000}
+        />
       )}
+
+      <ContactExecutive
+        isOpen={showContactExecutive}
+        onClose={() => setShowContactExecutive(false)}
+      />
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200">
         <div className="border-b border-slate-200">
-          <div className="flex gap-1 p-1">
-            <button
-              onClick={() => setActiveTab('send')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
-                activeTab === 'send'
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Send className="w-5 h-5" />
-              Send Message
-            </button>
+          <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-slate-100">
+            <h2 className="text-2xl font-bold text-gray-900">Manage Office Communications</h2>
+            <p className="text-sm text-gray-600 mt-1">Administrator tools for managing groups and viewing communication history</p>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex gap-1 flex-1">
             <button
               onClick={() => setActiveTab('groups')}
               className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
@@ -515,162 +539,24 @@ export default function EmployeeCommunication() {
               <Users className="w-5 h-5" />
               Manage Groups
             </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
-                activeTab === 'history'
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <Clock className="w-5 h-5" />
-              History
-            </button>
+            {isAdminOrSuperAdmin && (
+              <button
+                onClick={() => setActiveTab('history')}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-colors ${
+                  activeTab === 'history'
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Clock className="w-5 h-5" />
+                History
+              </button>
+            )}
+            </div>
           </div>
         </div>
 
         <div className="p-6">
-          {activeTab === 'send' && (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-800 mb-4">Send Communication</h3>
-
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <button
-                    onClick={() => setCommunicationType('email')}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      communicationType === 'email'
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <Mail className={`w-8 h-8 mx-auto mb-2 ${
-                      communicationType === 'email' ? 'text-blue-600' : 'text-slate-400'
-                    }`} />
-                    <div className="font-medium text-slate-800">Email</div>
-                  </button>
-                  <button
-                    onClick={() => setCommunicationType('sms')}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      communicationType === 'sms'
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
-                  >
-                    <MessageSquare className={`w-8 h-8 mx-auto mb-2 ${
-                      communicationType === 'sms' ? 'text-blue-600' : 'text-slate-400'
-                    }`} />
-                    <div className="font-medium text-slate-800">SMS</div>
-                  </button>
-                </div>
-
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Send To
-                  </label>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-sm text-slate-600 mb-2">Select Group (Optional)</label>
-                      <select
-                        value={selectedGroup}
-                        onChange={(e) => {
-                          setSelectedGroup(e.target.value);
-                          if (e.target.value) setSelectedUsers([]);
-                        }}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      >
-                        <option value="">-- No Group Selected --</option>
-                        {groups.map(group => (
-                          <option key={group.id} value={group.id}>
-                            {group.name} ({group.member_count} members)
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {!selectedGroup && (
-                      <div>
-                        <label className="block text-sm text-slate-600 mb-2">Or Select Individual Users</label>
-                        <div className="relative mb-3">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                          <input
-                            type="text"
-                            placeholder="Search users..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                        </div>
-                        <div className="border border-slate-300 rounded-lg max-h-60 overflow-y-auto">
-                          {filteredUsers.map(u => (
-                            <label
-                              key={u.id}
-                              className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-100 last:border-b-0"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedUsers.includes(u.user_id)}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedUsers([...selectedUsers, u.user_id]);
-                                  } else {
-                                    setSelectedUsers(selectedUsers.filter(id => id !== u.user_id));
-                                  }
-                                }}
-                                className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                              />
-                              <div className="flex-1">
-                                <div className="font-medium text-slate-800">{u.name}</div>
-                                <div className="text-sm text-slate-600">{u.email}</div>
-                              </div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {communicationType === 'email' && (
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">
-                      Subject
-                    </label>
-                    <input
-                      type="text"
-                      value={subject}
-                      onChange={(e) => setSubject(e.target.value)}
-                      placeholder="Enter email subject..."
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                )}
-
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-slate-700 mb-2">
-                    Message
-                  </label>
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder={`Enter your ${communicationType === 'sms' ? 'text' : 'email'} message...`}
-                    rows={8}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                  />
-                </div>
-
-                <button
-                  onClick={handleSendMessage}
-                  disabled={sending}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Send className="w-5 h-5" />
-                  {sending ? 'Sending...' : 'Send Message'}
-                </button>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'groups' && (
             <div className="space-y-6">
               <div className="flex items-center justify-between mb-4">
@@ -861,13 +747,22 @@ export default function EmployeeCommunication() {
                             </p>
                           </div>
                         </div>
-                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          log.communication_type === 'email'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-green-100 text-green-800'
-                        }`}>
-                          {log.communication_type.toUpperCase()}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                            log.communication_type === 'email'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}>
+                            {log.communication_type.toUpperCase()}
+                          </span>
+                          <button
+                            onClick={() => handleDeleteCommunicationLog(log.id)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Delete communication log"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <p className="text-sm text-slate-700 mb-2 whitespace-pre-wrap">{log.message}</p>
                       <p className="text-xs text-slate-500">

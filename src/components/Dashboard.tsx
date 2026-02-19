@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -19,14 +19,16 @@ import CloserRewardsReport from './CloserRewardsReport';
 import { MeetingLogsReport } from './MeetingLogsReport';
 import ProcessorReportForm from './ProcessorReportForm';
 import WeeklyReportsView from './WeeklyReportsView';
-import ContactExecutive from './ContactExecutive';
 import { Announcements } from './Announcements';
 import { AnnouncementsArchive } from './AnnouncementsArchive';
 import { AnnouncementsAdmin } from './AnnouncementsAdmin';
 import EmployeeCommunication from './EmployeeCommunication';
 import { LoginAnnouncementsModal } from './LoginAnnouncementsModal';
+import SMSOptInModal from './SMSOptInModal';
+import { SMSOptInManagement } from './SMSOptInManagement';
+import { ViewCommunications } from './ViewCommunications';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
@@ -37,8 +39,8 @@ export function Dashboard() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
-  const [showContactExecutive, setShowContactExecutive] = useState(false);
   const [showLoginAnnouncements, setShowLoginAnnouncements] = useState(false);
+  const [showSMSOptIn, setShowSMSOptIn] = useState(false);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,15 +82,16 @@ export function Dashboard() {
     { id: 'processor-report' as Tab, label: 'Submit Performance Report', icon: ClipboardList, module: 'submit_performance_report', color: 'text-blue-700' },
     { id: 'meetings' as Tab, label: 'Meeting Logs', icon: Calendar, module: 'meeting_logs_report', color: 'text-orange-600' },
     { id: 'resources' as Tab, label: 'Resources', icon: FileText, module: 'resources', color: 'text-slate-600' },
-    { id: 'audit' as Tab, label: 'Audit Log', icon: History, module: 'audit_log', color: 'text-slate-500' },
   ];
 
   // Administrative tabs that will be in the dropdown
   const allAdminTabs = [
     { id: 'add' as Tab, label: 'Add Prospect', icon: UserPlus, module: 'add_prospect', color: 'text-cyan-600' },
     { id: 'admin' as Tab, label: 'Admin Panel', icon: Database, module: 'admin_panel', color: 'text-rose-600' },
+    { id: 'audit' as Tab, label: 'Audit Log', icon: History, module: 'audit_log', color: 'text-slate-500' },
     { id: 'announcements-admin' as Tab, label: 'Manage Announcements', icon: Megaphone, module: 'manage_announcements', color: 'text-teal-600' },
-    { id: 'employee-communication' as Tab, label: 'Employee Communication', icon: Mail, module: 'employee_communication', color: 'text-purple-600' },
+    { id: 'employee-communication' as Tab, label: 'Manage Office Communications', icon: Mail, module: 'employee_communication', color: 'text-purple-600' },
+    { id: 'sms-management' as Tab, label: 'SMS Opt-In Management', icon: MessageSquare, module: 'sms_management', color: 'text-blue-600' },
     { id: 'rewards' as Tab, label: 'Rewards Report', icon: Award, module: 'closer_rewards_report', color: 'text-yellow-600' },
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
     { id: 'import' as Tab, label: 'Batch Import Contact Data', icon: Upload, module: 'import_data', color: 'text-violet-600' },
@@ -128,9 +131,10 @@ export function Dashboard() {
     if (!permissionsLoading) {
       const allTabs = [...regularTabs, ...adminTabs];
       if (allTabs.length > 0) {
-        // Check if current tab has access (including standalone tabs like announcements)
+        // Check if current tab has access (including standalone tabs like announcements and view-communications)
         const currentTabHasAccess = allTabs.some(tab => tab.id === activeTab) ||
-          (activeTab === 'announcements' && hasAccess('announcements'));
+          (activeTab === 'announcements' && hasAccess('announcements')) ||
+          (activeTab === 'view-communications' && hasAccess('view_communications'));
         if (!currentTabHasAccess) {
           setActiveTab(allTabs[0].id);
         }
@@ -214,15 +218,17 @@ export function Dashboard() {
                 <div className="relative">
                   <Announcements onNavigateToAnnouncements={() => setActiveTab('announcements')} />
                 </div>
-                <button
-                  onClick={() => setShowContactExecutive(true)}
-                  className={`flex items-center text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors ${
-                    isMobile ? 'gap-1 px-2 py-2' : 'gap-2 px-4 py-2'
-                  }`}
-                >
-                  <Mail className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
-                  <span className={isMobile ? 'text-xs' : 'text-sm'}>Contact Executives</span>
-                </button>
+                {hasAccess('view_communications') && (
+                  <button
+                    onClick={() => setActiveTab('view-communications')}
+                    className={`flex items-center text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors ${
+                      isMobile ? 'gap-1 px-2 py-2' : 'gap-2 px-4 py-2'
+                    }`}
+                  >
+                    <Mail className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
+                    <span className={isMobile ? 'text-xs' : 'text-sm'}>Office Communications</span>
+                  </button>
+                )}
               </div>
               {!isMobile && !isTablet && (
                 <button
@@ -365,10 +371,33 @@ export function Dashboard() {
         {activeTab === 'meetings' && hasAccess('meeting_logs_report') && <MeetingLogsReport />}
         {activeTab === 'announcements' && hasAccess('announcements') && <AnnouncementsArchive />}
         {activeTab === 'announcements-admin' && hasAccess('manage_announcements') && <AnnouncementsAdmin />}
+        {activeTab === 'view-communications' && hasAccess('view_communications') && <ViewCommunications />}
         {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
+        {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
       </main>
+
+      <footer className="bg-white border-t border-slate-200 py-4 mt-8">
+        <div className="max-w-7xl mx-auto px-6 lg:px-8">
+          <div className="flex items-center justify-center">
+            <button
+              onClick={() => setShowSMSOptIn(true)}
+              className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
+            >
+              <MessageSquare className="w-4 h-4" />
+              SMS Opt-In
+            </button>
+          </div>
+        </div>
+      </footer>
+
+      {showSMSOptIn && (
+        <SMSOptInModal
+          isOpen={showSMSOptIn}
+          onClose={() => setShowSMSOptIn(false)}
+        />
+      )}
 
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -447,10 +476,6 @@ export function Dashboard() {
         </div>
       )}
 
-      <ContactExecutive
-        isOpen={showContactExecutive}
-        onClose={() => setShowContactExecutive(false)}
-      />
 
       {showLoginAnnouncements && (
         <LoginAnnouncementsModal onClose={() => setShowLoginAnnouncements(false)} />

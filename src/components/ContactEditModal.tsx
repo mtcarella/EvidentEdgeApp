@@ -48,6 +48,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
     paralegal: contact.paralegal || '',
     client_paralegal_processor: contact.client_paralegal_processor || '',
     evident_paralegal: contact.evident_paralegal || '',
+    client_identifier_no: contact.client_identifier_no || '',
     preferred_surveyor: contact.preferred_surveyor || '',
     preferred_uw: contact.preferred_uw || '',
     preferred_closer: contact.preferred_closer || '',
@@ -91,6 +92,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
         marketing_points: editForm.marketing_points,
         client_paralegal_processor: toNullIfEmpty(editForm.client_paralegal_processor),
         evident_paralegal: toNullIfEmpty(editForm.evident_paralegal),
+        client_identifier_no: toNullIfEmpty(editForm.client_identifier_no),
       };
 
       // Admin/processor only fields
@@ -324,6 +326,16 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
                 type="text"
                 value={editForm.company}
                 onChange={(e) => setEditForm({ ...editForm, company: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Client Identifier No.</label>
+              <input
+                type="text"
+                value={editForm.client_identifier_no}
+                onChange={(e) => setEditForm({ ...editForm, client_identifier_no: e.target.value })}
+                placeholder="Enter client identifier..."
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>

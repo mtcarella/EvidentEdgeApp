@@ -15,6 +15,7 @@ export function AddProspect() {
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
   const [address, setAddress] = useState('');
+  const [clientIdentifierNo, setClientIdentifierNo] = useState('');
   const [paralegal, setParalegal] = useState('');
   const [preferredSurveyor, setPreferredSurveyor] = useState('');
   const [preferredUw, setPreferredUw] = useState('');
@@ -71,7 +72,7 @@ export function AddProspect() {
     try {
       const { data, error } = await supabase
         .from('contacts')
-        .select('id, name, first_name, last_name, type, email, phone, cell_phone, company, branch, address, paralegal, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
+        .select('id, name, first_name, last_name, type, email, phone, cell_phone, company, branch, address, client_identifier_no, paralegal, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
         .or(`name.ilike.%${searchTerm}%,first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%`)
         .order('name')
         .limit(10);
@@ -96,6 +97,7 @@ export function AddProspect() {
     setCompany(contact.company || '');
     setBranch(contact.branch || '');
     setAddress(contact.address || '');
+    setClientIdentifierNo(contact.client_identifier_no || '');
     setParalegal(contact.type === 'attorney' ? (contact.paralegal || '') : '');
     setPreferredSurveyor(contact.preferred_surveyor || '');
     setPreferredUw(contact.preferred_uw || '');
@@ -199,6 +201,7 @@ export function AddProspect() {
         type,
         assigned_to: selectedSalesperson,
         updated_by: user?.id,
+        client_identifier_no: clientIdentifierNo || null,
         preferred_surveyor: preferredSurveyor || null,
         preferred_uw: preferredUw || null,
         preferred_closer: preferredCloser || null,
@@ -280,6 +283,7 @@ export function AddProspect() {
       setCompany('');
       setBranch('');
       setAddress('');
+      setClientIdentifierNo('');
       setParalegal('');
       setPreferredSurveyor('');
       setPreferredUw('');
@@ -519,6 +523,20 @@ export function AddProspect() {
               type="text"
               value={company}
               onChange={(e) => setCompany(e.target.value)}
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="clientIdentifierNo" className="block text-sm font-medium text-slate-700 mb-2">
+              Client Identifier No.
+            </label>
+            <input
+              id="clientIdentifierNo"
+              type="text"
+              value={clientIdentifierNo}
+              onChange={(e) => setClientIdentifierNo(e.target.value)}
+              placeholder="Enter client identifier..."
               className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             />
           </div>
