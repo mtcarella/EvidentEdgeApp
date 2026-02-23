@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Mail, MessageSquare, Search, Clock, Users, Send, X, AlertCircle } from 'lucide-react';
+import { Mail, MessageSquare, Search, Clock, Users, Send, X, AlertCircle, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
@@ -32,6 +32,8 @@ interface CommunicationLog {
   sent_at: string;
   sender_name?: string;
   group_name?: string;
+  deleted_by_user?: string[];
+  deleted_at?: string;
 }
 
 type Tab = 'send' | 'inbox';
@@ -56,6 +58,8 @@ export function ViewCommunications() {
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showContactExecutive, setShowContactExecutive] = useState(false);
   const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [showDeletedMessages, setShowDeletedMessages] = useState(false);
 
   useEffect(() => {
     fetchCommunications();
@@ -69,6 +73,19 @@ export function ViewCommunications() {
     }
   }, [activeTab]);
 
+  const markCommunicationsAsRead = async (commIds: string[]) => {
+    if (!user?.id || commIds.length === 0) return;
+
+    const inserts = commIds.map(commId => ({
+      communication_id: commId,
+      user_id: user.id
+    }));
+
+    await supabase
+      .from('communication_reads')
+      .upsert(inserts, { onConflict: 'communication_id,user_id', ignoreDuplicates: true });
+  };
+
   const fetchCommunications = async () => {
     if (!user?.id) return;
 
@@ -78,11 +95,9 @@ export function ViewCommunications() {
       .from('communication_logs')
       .select('*');
 
-    // Admins and super admins can see all communications
-    const isAdmin = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
+    const isAdminUser = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
 
-    if (!isAdmin) {
-      // Non-admins only see messages they sent or received
+    if (!isAdminUser) {
       query = query.or(`recipient_ids.cs.{${user.id}},sent_by.eq.${user.id}`);
     }
 
@@ -122,7 +137,50 @@ export function ViewCommunications() {
 
     setCommunications(logsWithDetails);
     setLoading(false);
+
+    const visibleLogs = logsWithDetails.filter(log => {
+      const deletedBy = log.deleted_by_user || [];
+      return !deletedBy.includes(user.id);
+    });
+
+    if (visibleLogs.length > 0) {
+      const commIds = visibleLogs.map(log => log.id);
+      markCommunicationsAsRead(commIds);
+    }
   };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!user?.id) return;
+
+    setDeletingMessageId(messageId);
+
+    const message = communications.find(c => c.id === messageId);
+    const currentDeletedBy = message?.deleted_by_user || [];
+
+    const { error } = await supabase
+      .from('communication_logs')
+      .update({
+        deleted_by_user: [...currentDeletedBy, user.id],
+        deleted_at: message?.deleted_at || new Date().toISOString()
+      })
+      .eq('id', messageId);
+
+    if (error) {
+      console.error('Error deleting message:', error);
+      setNotification({ type: 'error', message: 'Failed to delete message' });
+    } else {
+      setCommunications(prev => prev.map(c =>
+        c.id === messageId
+          ? { ...c, deleted_by_user: [...currentDeletedBy, user.id] }
+          : c
+      ));
+      setNotification({ type: 'success', message: 'Message deleted' });
+    }
+
+    setDeletingMessageId(null);
+  };
+
+  const isAdminUser = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
 
   const filteredCommunications = communications.filter(comm => {
     const matchesSearch =
@@ -132,7 +190,17 @@ export function ViewCommunications() {
 
     const matchesType = filterType === 'all' || comm.communication_type === filterType;
 
-    return matchesSearch && matchesType;
+    const deletedBy = comm.deleted_by_user || [];
+    const isDeletedByUser = user?.id ? deletedBy.includes(user.id) : false;
+
+    if (isAdminUser) {
+      if (!showDeletedMessages && isDeletedByUser) {
+        return false;
+      }
+      return matchesSearch && matchesType;
+    }
+
+    return matchesSearch && matchesType && !isDeletedByUser;
   });
 
   const fetchUsers = async () => {
@@ -295,7 +363,7 @@ export function ViewCommunications() {
   );
 
   return (
-    <div className="max-w-7xl mx-auto">
+    <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       {notification && (
         <Toast
           type={notification.type}
@@ -309,18 +377,18 @@ export function ViewCommunications() {
         onClose={() => setShowContactExecutive(false)}
       />
 
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Office Communications</h2>
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Office Communications</h2>
             <p className="text-sm text-gray-600 mt-1">Send and receive messages with your team</p>
           </div>
           <button
             onClick={() => setShowContactExecutive(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-medium rounded-lg shadow-sm transition-all"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white font-medium rounded-lg shadow-sm transition-all w-full sm:w-auto"
           >
             <AlertCircle className="w-5 h-5" />
-            Contact Executives
+            <span>Contact Executives</span>
           </button>
         </div>
 
@@ -546,8 +614,8 @@ export function ViewCommunications() {
         {activeTab === 'inbox' && (
           <>
             {/* Search and Filter */}
-            <div className="mb-6 flex flex-col sm:flex-row gap-4">
-              <div className="flex-1 relative">
+            <div className="mb-6 flex flex-col gap-4">
+              <div className="w-full relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                 <input
                   type="text"
@@ -557,10 +625,10 @@ export function ViewCommunications() {
                   className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setFilterType('all')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  className={`px-3 sm:px-4 py-2 rounded-lg font-medium transition-colors text-sm sm:text-base ${
                     filterType === 'all'
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -570,28 +638,42 @@ export function ViewCommunications() {
                 </button>
                 <button
                   onClick={() => setFilterType('email')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                  className={`px-3 sm:px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 sm:gap-2 text-sm sm:text-base ${
                     filterType === 'email'
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
                 >
                   <Mail className="w-4 h-4" />
-                  Email
+                  <span>Email</span>
                 </button>
                 <button
                   onClick={() => setFilterType('sms')}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                  className={`px-3 sm:px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 sm:gap-2 text-sm sm:text-base ${
                     filterType === 'sms'
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
                 >
                   <MessageSquare className="w-4 h-4" />
-                  SMS
+                  <span>SMS</span>
                 </button>
               </div>
             </div>
+
+            {isAdminUser && (
+              <div className="mb-4 flex items-center gap-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showDeletedMessages}
+                    onChange={(e) => setShowDeletedMessages(e.target.checked)}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <span className="text-sm text-gray-600">Show deleted messages</span>
+                </label>
+              </div>
+            )}
 
             {/* Communications List */}
             {loading ? (
@@ -606,51 +688,82 @@ export function ViewCommunications() {
               </div>
             ) : (
               <div className="space-y-4">
-                {filteredCommunications.map((comm) => (
-                  <div
-                    key={comm.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-colors"
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${
-                          comm.communication_type === 'email'
-                            ? 'bg-blue-100 text-blue-600'
-                            : 'bg-green-100 text-green-600'
-                        }`}>
-                          {comm.communication_type === 'email' ? (
-                            <Mail className="w-5 h-5" />
-                          ) : (
-                            <MessageSquare className="w-5 h-5" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-gray-900">
-                              {comm.sender_name}
-                            </span>
-                            {comm.recipient_type === 'group' && comm.group_name && (
-                              <span className="flex items-center gap-1 text-sm text-gray-600">
-                                <Users className="w-4 h-4" />
-                                {comm.group_name}
-                              </span>
+                {filteredCommunications.map((comm) => {
+                  const deletedBy = comm.deleted_by_user || [];
+                  const isDeleted = user?.id ? deletedBy.includes(user.id) : false;
+                  const hasAnyDeletions = deletedBy.length > 0;
+
+                  return (
+                    <div
+                      key={comm.id}
+                      className={`border rounded-lg p-3 sm:p-4 transition-colors w-full ${
+                        isDeleted
+                          ? 'border-red-200 bg-red-50'
+                          : 'border-gray-200 hover:border-blue-300'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-0 mb-2">
+                        <div className="flex items-start gap-2 sm:gap-3 min-w-0 flex-1">
+                          <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${
+                            comm.communication_type === 'email'
+                              ? 'bg-blue-100 text-blue-600'
+                              : 'bg-green-100 text-green-600'
+                          }`}>
+                            {comm.communication_type === 'email' ? (
+                              <Mail className="w-4 h-4 sm:w-5 sm:h-5" />
+                            ) : (
+                              <MessageSquare className="w-4 h-4 sm:w-5 sm:h-5" />
                             )}
                           </div>
-                          <div className="flex items-center gap-2 text-sm text-gray-500">
-                            <Clock className="w-4 h-4" />
-                            {formatDate(comm.sent_at)}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                              <span className="font-semibold text-gray-900 text-sm sm:text-base">
+                                {comm.sender_name}
+                              </span>
+                              {comm.recipient_type === 'group' && comm.group_name && (
+                                <span className="flex items-center gap-1 text-xs sm:text-sm text-gray-600">
+                                  <Users className="w-3 h-3 sm:w-4 sm:h-4" />
+                                  {comm.group_name}
+                                </span>
+                              )}
+                              {isAdminUser && hasAnyDeletions && (
+                                <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
+                                  <Trash2 className="w-3 h-3" />
+                                  <span className="hidden sm:inline">Deleted by {deletedBy.length} user{deletedBy.length !== 1 ? 's' : ''}</span>
+                                  <span className="sm:hidden">{deletedBy.length}</span>
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm text-gray-500 mt-0.5">
+                              <Clock className="w-3 h-3 sm:w-4 sm:h-4" />
+                              <span className="truncate">{formatDate(comm.sent_at)}</span>
+                            </div>
                           </div>
                         </div>
+                        {!isDeleted && (
+                          <button
+                            onClick={() => handleDeleteMessage(comm.id)}
+                            disabled={deletingMessageId === comm.id}
+                            className="p-1.5 sm:p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors self-start shrink-0"
+                            title="Delete message"
+                          >
+                            {deletingMessageId === comm.id ? (
+                              <div className="w-4 h-4 sm:w-5 sm:h-5 animate-spin rounded-full border-2 border-gray-300 border-t-red-600" />
+                            ) : (
+                              <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                            )}
+                          </button>
+                        )}
                       </div>
+
+                      {comm.subject && (
+                        <h3 className="font-semibold text-gray-900 mb-2 text-sm sm:text-base break-words">{comm.subject}</h3>
+                      )}
+
+                      <p className="text-gray-700 whitespace-pre-wrap text-sm sm:text-base break-words">{comm.message}</p>
                     </div>
-
-                    {comm.subject && (
-                      <h3 className="font-semibold text-gray-900 mb-2">{comm.subject}</h3>
-                    )}
-
-                    <p className="text-gray-700 whitespace-pre-wrap">{comm.message}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </>

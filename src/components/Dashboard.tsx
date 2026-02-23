@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -27,8 +27,9 @@ import { LoginAnnouncementsModal } from './LoginAnnouncementsModal';
 import SMSOptInModal from './SMSOptInModal';
 import { SMSOptInManagement } from './SMSOptInManagement';
 import { ViewCommunications } from './ViewCommunications';
+import { UploadResource } from './UploadResource';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
@@ -41,6 +42,7 @@ export function Dashboard() {
   const [showAdminDropdown, setShowAdminDropdown] = useState(false);
   const [showLoginAnnouncements, setShowLoginAnnouncements] = useState(false);
   const [showSMSOptIn, setShowSMSOptIn] = useState(false);
+  const [unreadCommunicationsCount, setUnreadCommunicationsCount] = useState(0);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -53,6 +55,42 @@ export function Dashboard() {
       }
     }
   }, [user, salesPerson]);
+
+  const fetchUnreadCommunicationsCount = useCallback(async () => {
+    if (!user?.id) return;
+
+    const isAdminUser = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
+
+    let query = supabase
+      .from('communication_logs')
+      .select('id');
+
+    if (!isAdminUser) {
+      query = query.or(`recipient_ids.cs.{${user.id}},sent_by.eq.${user.id}`);
+    }
+
+    const { data: allComms, error: commsError } = await query;
+
+    if (commsError || !allComms) {
+      setUnreadCommunicationsCount(0);
+      return;
+    }
+
+    const { data: readComms } = await supabase
+      .from('communication_reads')
+      .select('communication_id')
+      .eq('user_id', user.id);
+
+    const readIds = new Set(readComms?.map(r => r.communication_id) || []);
+    const unreadCount = allComms.filter(c => !readIds.has(c.id)).length;
+    setUnreadCommunicationsCount(unreadCount);
+  }, [user?.id, salesPerson?.role]);
+
+  useEffect(() => {
+    if (user?.id && hasAccess('view_communications')) {
+      fetchUnreadCommunicationsCount();
+    }
+  }, [user?.id, hasAccess, fetchUnreadCommunicationsCount]);
 
   const getGreeting = () => {
     const hour = nowInEST().getHours();
@@ -94,6 +132,7 @@ export function Dashboard() {
     { id: 'sms-management' as Tab, label: 'SMS Opt-In Management', icon: MessageSquare, module: 'sms_management', color: 'text-blue-600' },
     { id: 'rewards' as Tab, label: 'Rewards Report', icon: Award, module: 'closer_rewards_report', color: 'text-yellow-600' },
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
+    { id: 'upload-resource' as Tab, label: 'Upload Resource', icon: Upload, module: 'upload_resource', color: 'text-rose-600' },
     { id: 'import' as Tab, label: 'Batch Import Contact Data', icon: Upload, module: 'import_data', color: 'text-violet-600' },
   ];
 
@@ -106,6 +145,15 @@ export function Dashboard() {
   const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => hasAccess(tab.module));
 
   const [activeTab, setActiveTab] = useState<Tab>('search');
+
+  useEffect(() => {
+    if (activeTab === 'view-communications') {
+      const timer = setTimeout(() => {
+        fetchUnreadCommunicationsCount();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, fetchUnreadCommunicationsCount]);
 
   const isCloser = salesPerson?.role === 'closer';
   const isSuperAdmin = salesPerson?.role === 'super_admin';
@@ -221,12 +269,17 @@ export function Dashboard() {
                 {hasAccess('view_communications') && (
                   <button
                     onClick={() => setActiveTab('view-communications')}
-                    className={`flex items-center text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors ${
+                    className={`relative flex items-center text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors ${
                       isMobile ? 'gap-1 px-2 py-2' : 'gap-2 px-4 py-2'
                     }`}
                   >
                     <Mail className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
                     <span className={isMobile ? 'text-xs' : 'text-sm'}>Office Communications</span>
+                    {unreadCommunicationsCount > 0 && (
+                      <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg animate-pulse">
+                        {unreadCommunicationsCount > 99 ? '99+' : unreadCommunicationsCount}
+                      </span>
+                    )}
                   </button>
                 )}
               </div>
@@ -374,6 +427,7 @@ export function Dashboard() {
         {activeTab === 'view-communications' && hasAccess('view_communications') && <ViewCommunications />}
         {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
+        {activeTab === 'upload-resource' && hasAccess('upload_resource') && <UploadResource />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
       </main>

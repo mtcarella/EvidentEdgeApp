@@ -1,9 +1,29 @@
 import { useState, useEffect } from 'react';
-import { FileText, Upload, Trash2, Download, Loader, AlertCircle, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { Toast } from './Toast';
+
+const ICON_OPTIONS: Record<string, typeof FileText> = {
+  FileText, GraduationCap, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, Star, Tag
+};
+
+const COLOR_OPTIONS = [
+  { name: 'emerald', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200', hoverBg: 'hover:bg-emerald-100' },
+  { name: 'sky', color: 'text-sky-600', bgColor: 'bg-sky-50', borderColor: 'border-sky-200', hoverBg: 'hover:bg-sky-100' },
+  { name: 'amber', color: 'text-amber-600', bgColor: 'bg-amber-50', borderColor: 'border-amber-200', hoverBg: 'hover:bg-amber-100' },
+  { name: 'slate', color: 'text-slate-600', bgColor: 'bg-slate-50', borderColor: 'border-slate-200', hoverBg: 'hover:bg-slate-100' },
+  { name: 'rose', color: 'text-rose-600', bgColor: 'bg-rose-50', borderColor: 'border-rose-200', hoverBg: 'hover:bg-rose-100' },
+  { name: 'teal', color: 'text-teal-600', bgColor: 'bg-teal-50', borderColor: 'border-teal-200', hoverBg: 'hover:bg-teal-100' },
+  { name: 'blue', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200', hoverBg: 'hover:bg-blue-100' },
+  { name: 'orange', color: 'text-orange-600', bgColor: 'bg-orange-50', borderColor: 'border-orange-200', hoverBg: 'hover:bg-orange-100' },
+  { name: 'cyan', color: 'text-cyan-600', bgColor: 'bg-cyan-50', borderColor: 'border-cyan-200', hoverBg: 'hover:bg-cyan-100' },
+];
+
+const getColorConfig = (colorName: string) => {
+  return COLOR_OPTIONS.find(c => c.name === colorName) || COLOR_OPTIONS[0];
+};
 
 interface Contact {
   id: string;
@@ -34,26 +54,27 @@ interface Resource {
   } | null;
 }
 
-type Category = 'Evident Edge Tutorials' | 'Accutitle Tutorials' | "FAQ's" | 'Office Resources' | 'Marketing' | 'Miscellaneous' | 'Administration';
-
-const ALL_CATEGORIES: Category[] = ['Evident Edge Tutorials', 'Accutitle Tutorials', "FAQ's", 'Office Resources', 'Marketing', 'Miscellaneous', 'Administration'];
-const PUBLIC_CATEGORIES: Category[] = ['Evident Edge Tutorials', 'Accutitle Tutorials', "FAQ's", 'Office Resources', 'Marketing', 'Miscellaneous'];
+interface ResourceCategory {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  sort_order: number;
+  is_active: boolean;
+}
 
 export function Resources() {
   const { salesPerson, isAdmin } = useAuth();
   const { isMobile } = useDeviceDetection();
   const [resources, setResources] = useState<Resource[]>([]);
+  const [categories, setCategories] = useState<ResourceCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Show all categories to admins, only public categories to regular users
-  const visibleCategories = isAdmin ? ALL_CATEGORIES : PUBLIC_CATEGORIES;
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(visibleCategories));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
-  const [editCategory, setEditCategory] = useState<Category>('Evident Edge Tutorials');
+  const [editCategory, setEditCategory] = useState<string>('');
   const [editLoading, setEditLoading] = useState(false);
   const [emailResource, setEmailResource] = useState<Resource | null>(null);
   const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
@@ -67,17 +88,17 @@ export function Resources() {
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [uploadForm, setUploadForm] = useState<{
-    title: string;
-    category: Category;
-    file: File | null;
-  }>({
-    title: '',
-    category: 'Evident Edge Tutorials',
-    file: null,
-  });
+
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<ResourceCategory | null>(null);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('FileText');
+  const [newCategoryColor, setNewCategoryColor] = useState('emerald');
+  const [categoryActionLoading, setCategoryActionLoading] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
 
   useEffect(() => {
+    fetchCategories();
     fetchResources();
     fetchUsers();
     fetchUserGroups();
@@ -88,6 +109,23 @@ export function Resources() {
       fetchMyContacts();
     }
   }, [salesPerson?.id]);
+
+  useEffect(() => {
+    if (categories.length > 0 && expandedCategories.size === 0) {
+      setExpandedCategories(new Set(categories.map(c => c.name)));
+    }
+  }, [categories]);
+
+  const fetchCategories = async () => {
+    const { data, error } = await supabase
+      .from('resource_categories')
+      .select('*')
+      .order('sort_order');
+
+    if (!error && data) {
+      setCategories(data);
+    }
+  };
 
   const fetchUsers = async () => {
     const { data, error } = await supabase
@@ -174,72 +212,6 @@ export function Resources() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.type !== 'application/pdf') {
-        setUploadError('Please select a PDF file');
-        return;
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        setUploadError('File size must be less than 10MB');
-        return;
-      }
-      setUploadForm({ ...uploadForm, file });
-      setUploadError(null);
-    }
-  };
-
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uploadForm.file || !uploadForm.title.trim() || !salesPerson?.id) return;
-
-    setUploading(true);
-    setUploadError(null);
-
-    try {
-      const fileName = `${Date.now()}_${uploadForm.file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      const filePath = `${uploadForm.category}/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('resources')
-        .upload(filePath, uploadForm.file);
-
-      if (uploadError) throw uploadError;
-
-      const { error: dbError } = await supabase
-        .from('resources')
-        .insert({
-          title: uploadForm.title.trim(),
-          category: uploadForm.category,
-          file_path: filePath,
-          file_size: uploadForm.file.size,
-          uploaded_by: salesPerson.id,
-        });
-
-      if (dbError) {
-        await supabase.storage.from('resources').remove([filePath]);
-        throw dbError;
-      }
-
-      setUploadForm({
-        title: '',
-        category: 'Evident Edge Tutorials',
-        file: null,
-      });
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
-
-      await fetchResources();
-    } catch (error: any) {
-      console.error('Error uploading resource:', error);
-      setUploadError(error.message || 'Failed to upload resource');
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const handlePreview = async (resource: Resource) => {
     try {
       const { data, error } = await supabase.storage
@@ -313,12 +285,12 @@ export function Resources() {
 
   const handleEditClick = (resource: Resource) => {
     setEditingResource(resource);
-    setEditCategory(resource.category as Category);
+    setEditCategory(resource.category);
   };
 
   const handleEditCancel = () => {
     setEditingResource(null);
-    setEditCategory('Evident Edge Tutorials');
+    setEditCategory('');
   };
 
   const handleEditSave = async () => {
@@ -546,10 +518,141 @@ export function Resources() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a category name' });
+      return;
+    }
+
+    setCategoryActionLoading(true);
+    try {
+      const maxOrder = categories.length > 0 ? Math.max(...categories.map(c => c.sort_order)) : 0;
+
+      const { error } = await supabase
+        .from('resource_categories')
+        .insert({
+          name: newCategoryName.trim(),
+          icon: newCategoryIcon,
+          color: newCategoryColor,
+          sort_order: maxOrder + 1
+        });
+
+      if (error) throw error;
+
+      await fetchCategories();
+      setNewCategoryName('');
+      setNewCategoryIcon('FileText');
+      setNewCategoryColor('emerald');
+      setShowAddCategory(false);
+      setNotification({ type: 'success', message: 'Category created successfully' });
+    } catch (error: any) {
+      console.error('Error creating category:', error);
+      setNotification({ type: 'error', message: error.message || 'Failed to create category' });
+    } finally {
+      setCategoryActionLoading(false);
+    }
+  };
+
+  const handleEditCategoryClick = (category: ResourceCategory) => {
+    setEditingCategory(category);
+    setNewCategoryName(category.name);
+    setNewCategoryIcon(category.icon);
+    setNewCategoryColor(category.color);
+  };
+
+  const handleUpdateCategory = async () => {
+    if (!editingCategory || !newCategoryName.trim()) return;
+
+    setCategoryActionLoading(true);
+    try {
+      const oldName = editingCategory.name;
+      const newName = newCategoryName.trim();
+
+      const { error: updateError } = await supabase
+        .from('resource_categories')
+        .update({
+          name: newName,
+          icon: newCategoryIcon,
+          color: newCategoryColor,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', editingCategory.id);
+
+      if (updateError) throw updateError;
+
+      if (oldName !== newName) {
+        const affectedResources = resources.filter(r => r.category === oldName);
+
+        for (const resource of affectedResources) {
+          const oldFilePath = resource.file_path;
+          const fileName = oldFilePath.split('/').pop();
+          const newFilePath = `${newName}/${fileName}`;
+
+          const { data: fileData, error: downloadError } = await supabase.storage
+            .from('resources')
+            .download(oldFilePath);
+
+          if (downloadError) {
+            console.error(`Failed to download ${oldFilePath}:`, downloadError);
+            continue;
+          }
+
+          const { error: uploadError } = await supabase.storage
+            .from('resources')
+            .upload(newFilePath, fileData);
+
+          if (uploadError) {
+            console.error(`Failed to upload to ${newFilePath}:`, uploadError);
+            continue;
+          }
+
+          const { error: dbUpdateError } = await supabase
+            .from('resources')
+            .update({
+              category: newName,
+              file_path: newFilePath
+            })
+            .eq('id', resource.id);
+
+          if (dbUpdateError) {
+            console.error(`Failed to update resource ${resource.id}:`, dbUpdateError);
+            await supabase.storage.from('resources').remove([newFilePath]);
+            continue;
+          }
+
+          await supabase.storage.from('resources').remove([oldFilePath]);
+        }
+      }
+
+      await fetchCategories();
+      await fetchResources();
+      setEditingCategory(null);
+      setNewCategoryName('');
+      setNewCategoryIcon('FileText');
+      setNewCategoryColor('emerald');
+      setNotification({ type: 'success', message: 'Category updated successfully' });
+    } catch (error: any) {
+      console.error('Error updating category:', error);
+      setNotification({ type: 'error', message: error.message || 'Failed to update category' });
+    } finally {
+      setCategoryActionLoading(false);
+    }
+  };
+
+  const handleCancelCategoryEdit = () => {
+    setEditingCategory(null);
+    setShowAddCategory(false);
+    setNewCategoryName('');
+    setNewCategoryIcon('FileText');
+    setNewCategoryColor('emerald');
+  };
+
+  const visibleCategories = categories.filter(c => c.is_active);
+
   const resourcesByCategory = visibleCategories.reduce((acc, category) => {
-    acc[category] = resources.filter(r => r.category === category);
+    acc[category.name] = resources.filter(r => r.category === category.name);
     return acc;
-  }, {} as Record<Category, Resource[]>);
+  }, {} as Record<string, Resource[]>);
 
   if (loading) {
     return (
@@ -560,174 +663,146 @@ export function Resources() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Resources</h2>
+    <div className="space-y-8">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg shadow-blue-500/20">
+            <FileText className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Resources</h2>
+            <p className="text-sm text-gray-500">Access documents, tutorials, and guides</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button
+              onClick={() => setShowCategoryManager(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+            >
+              <Settings className="h-4 w-4" />
+              <span className="hidden sm:inline">Manage Categories</span>
+            </button>
+          )}
+          <div className="hidden md:flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+            <FileText className="h-4 w-4" />
+            <span>{resources.length} files</span>
+          </div>
+        </div>
       </div>
 
-      {isAdmin && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            Upload New Resource
-          </h3>
-          <form onSubmit={handleUpload} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Title
-              </label>
-              <input
-                type="text"
-                value={uploadForm.title}
-                onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category
-              </label>
-              <select
-                value={uploadForm.category}
-                onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value as Category })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                {visibleCategories.map(category => (
-                  <option key={category} value={category}>{category}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                PDF File (Max 10MB)
-              </label>
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={handleFileChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-            </div>
-            {uploadError && (
-              <div className="flex items-center gap-2 text-red-600 text-sm">
-                <AlertCircle className="h-4 w-4" />
-                {uploadError}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={uploading || !uploadForm.file || !uploadForm.title.trim()}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {uploading ? (
-                <>
-                  <Loader className="h-5 w-5 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-5 w-5" />
-                  Upload Resource
-                </>
-              )}
-            </button>
-          </form>
-        </div>
-      )}
-
-      <div className="space-y-4">
+      <div className="grid gap-5">
         {visibleCategories.map(category => {
-          const categoryResources = resourcesByCategory[category];
-          const isExpanded = expandedCategories.has(category);
+          const categoryResources = resourcesByCategory[category.name] || [];
+          const isExpanded = expandedCategories.has(category.name);
+          const colorConfig = getColorConfig(category.color);
+          const IconComponent = ICON_OPTIONS[category.icon] || FileText;
 
           return (
-            <div key={category} className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div
+              key={category.id}
+              className={`rounded-2xl border-2 ${colorConfig.borderColor} overflow-hidden bg-white shadow-md hover:shadow-lg transition-all duration-200`}
+            >
               <button
-                onClick={() => toggleCategory(category)}
-                className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                onClick={() => toggleCategory(category.name)}
+                className={`w-full px-6 py-5 flex items-center justify-between transition-all duration-200 ${colorConfig.bgColor} ${colorConfig.hoverBg}`}
               >
-                <div className="flex items-center gap-3">
-                  <FileText className="h-5 w-5 text-blue-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">{category}</h3>
-                  <span className="text-sm text-gray-500">
-                    ({categoryResources.length})
-                  </span>
+                <div className="flex items-center gap-5">
+                  <div className={`p-3.5 rounded-xl bg-white shadow-md border-2 ${colorConfig.borderColor}`}>
+                    <IconComponent className={`h-7 w-7 ${colorConfig.color}`} />
+                  </div>
+                  <div className="text-left">
+                    <h3 className={`text-xl font-bold ${colorConfig.color}`}>{category.name}</h3>
+                    <p className="text-sm text-gray-600 mt-1 font-medium">
+                      {categoryResources.length} {categoryResources.length === 1 ? 'document' : 'documents'}
+                    </p>
+                  </div>
                 </div>
-                {isExpanded ? (
-                  <ChevronUp className="h-5 w-5 text-gray-500" />
-                ) : (
-                  <ChevronDown className="h-5 w-5 text-gray-500" />
-                )}
+                <div className={`p-2.5 rounded-xl transition-all duration-200 ${isExpanded ? 'bg-white shadow-md' : ''}`}>
+                  {isExpanded ? (
+                    <ChevronUp className={`h-6 w-6 ${colorConfig.color}`} />
+                  ) : (
+                    <ChevronDown className="h-6 w-6 text-gray-400" />
+                  )}
+                </div>
               </button>
 
-              {isExpanded && (
-                <div className="border-t border-gray-200">
+              <div className={`transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}>
+                <div className="border-t border-gray-100 bg-white">
                   {categoryResources.length === 0 ? (
-                    <div className="px-6 py-8 text-center text-gray-500">
-                      No resources in this category yet
+                    <div className="px-6 py-12 text-center">
+                      <div className={`inline-flex p-3 rounded-full ${colorConfig.bgColor} mb-3`}>
+                        <IconComponent className={`h-6 w-6 ${colorConfig.color} opacity-50`} />
+                      </div>
+                      <p className="text-gray-500 text-sm">No resources in this category yet</p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-gray-200">
-                      {categoryResources.map(resource => (
-                        <div
-                          key={resource.id}
-                          className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="flex-1">
-                            <h4 className="font-medium text-gray-900">{resource.title}</h4>
-                            <p className="text-sm text-gray-500 mt-1">
-                              {formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}
-                            </p>
+                    <div className="p-3">
+                      <div className="space-y-2">
+                        {categoryResources.map(resource => (
+                          <div
+                            key={resource.id}
+                            className="group flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50/50 transition-all duration-150"
+                          >
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className="p-2 rounded-lg bg-gray-100 group-hover:bg-white group-hover:shadow-sm transition-all duration-150">
+                                <FileText className="h-4 w-4 text-gray-500" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h4 className="font-medium text-gray-900 truncate text-sm">{resource.title}</h4>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 ml-3 opacity-70 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handlePreview(resource)}
+                                className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                title="View PDF"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDownload(resource)}
+                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                title="Download"
+                              >
+                                <Download className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleEmailClick(resource)}
+                                className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                title="Email Document"
+                              >
+                                <Mail className="h-4 w-4" />
+                              </button>
+                              {isAdmin && (
+                                <>
+                                  <button
+                                    onClick={() => handleEditClick(resource)}
+                                    className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                                    title="Edit Category"
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(resource)}
+                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handlePreview(resource)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                              title="View PDF"
-                            >
-                              <Eye className="h-5 w-5" />
-                            </button>
-                            <button
-                              onClick={() => handleDownload(resource)}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="Download"
-                            >
-                              <Download className="h-5 w-5" />
-                            </button>
-                            <button
-                              onClick={() => handleEmailClick(resource)}
-                              className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                              title="Email Document"
-                            >
-                              <Mail className="h-5 w-5" />
-                            </button>
-                            {isAdmin && (
-                              <>
-                                <button
-                                  onClick={() => handleEditClick(resource)}
-                                  className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                                  title="Edit Category"
-                                >
-                                  <Edit className="h-5 w-5" />
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(resource)}
-                                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-5 w-5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
@@ -800,11 +875,11 @@ export function Resources() {
                 </label>
                 <select
                   value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value as Category)}
+                  onChange={(e) => setEditCategory(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
-                  {visibleCategories.map(category => (
-                    <option key={category} value={category}>{category}</option>
+                  {categories.map(category => (
+                    <option key={category.id} value={category.name}>{category.name}</option>
                   ))}
                 </select>
               </div>
@@ -1094,6 +1169,259 @@ export function Resources() {
                     Send Email
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCategoryManager && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Settings className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Manage Categories</h3>
+                  <p className="text-sm text-gray-500">Add, edit, or organize resource categories</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCategoryManager(false);
+                  handleCancelCategoryEdit();
+                }}
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-4">
+                {categories.map((category) => {
+                  const isEditing = editingCategory?.id === category.id;
+                  const catColorConfig = getColorConfig(category.color);
+                  const CatIcon = ICON_OPTIONS[category.icon] || FileText;
+
+                  if (isEditing) {
+                    return (
+                      <div key={category.id} className="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Category Name</label>
+                            <input
+                              type="text"
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              placeholder="Enter category name"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Icon</label>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(ICON_OPTIONS).map(([iconName, Icon]) => (
+                                <button
+                                  key={iconName}
+                                  onClick={() => setNewCategoryIcon(iconName)}
+                                  className={`p-2.5 rounded-lg border-2 transition-all ${
+                                    newCategoryIcon === iconName
+                                      ? 'border-blue-500 bg-blue-50'
+                                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                                  }`}
+                                >
+                                  <Icon className={`h-5 w-5 ${newCategoryIcon === iconName ? 'text-blue-600' : 'text-gray-500'}`} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                            <div className="flex flex-wrap gap-2">
+                              {COLOR_OPTIONS.map((colorOpt) => (
+                                <button
+                                  key={colorOpt.name}
+                                  onClick={() => setNewCategoryColor(colorOpt.name)}
+                                  className={`p-2.5 rounded-lg border-2 transition-all ${colorOpt.bgColor} ${
+                                    newCategoryColor === colorOpt.name
+                                      ? 'border-gray-800 ring-2 ring-gray-400'
+                                      : `${colorOpt.borderColor} hover:border-gray-400`
+                                  }`}
+                                >
+                                  <Palette className={`h-5 w-5 ${colorOpt.color}`} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              onClick={handleCancelCategoryEdit}
+                              disabled={categoryActionLoading}
+                              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleUpdateCategory}
+                              disabled={categoryActionLoading || !newCategoryName.trim()}
+                              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                            >
+                              {categoryActionLoading ? (
+                                <>
+                                  <Loader className="h-4 w-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="h-4 w-4" />
+                                  Save Changes
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={category.id}
+                      className={`flex items-center justify-between p-4 rounded-xl border-2 ${catColorConfig.borderColor} ${catColorConfig.bgColor} transition-all hover:shadow-sm`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-lg bg-white shadow-sm border ${catColorConfig.borderColor}`}>
+                          <CatIcon className={`h-5 w-5 ${catColorConfig.color}`} />
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-gray-900">{category.name}</h4>
+                          <p className="text-xs text-gray-500">
+                            {resourcesByCategory[category.name]?.length || 0} documents
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleEditCategoryClick(category)}
+                        className="p-2 text-gray-500 hover:text-gray-700 hover:bg-white rounded-lg transition-colors"
+                        title="Edit category"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {showAddCategory ? (
+                  <div className="p-4 bg-emerald-50 border-2 border-emerald-200 border-dashed rounded-xl">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">New Category Name</label>
+                        <input
+                          type="text"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          placeholder="Enter category name"
+                          autoFocus
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Icon</label>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(ICON_OPTIONS).map(([iconName, Icon]) => (
+                            <button
+                              key={iconName}
+                              onClick={() => setNewCategoryIcon(iconName)}
+                              className={`p-2.5 rounded-lg border-2 transition-all ${
+                                newCategoryIcon === iconName
+                                  ? 'border-emerald-500 bg-emerald-50'
+                                  : 'border-gray-200 hover:border-gray-300 bg-white'
+                              }`}
+                            >
+                              <Icon className={`h-5 w-5 ${newCategoryIcon === iconName ? 'text-emerald-600' : 'text-gray-500'}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                        <div className="flex flex-wrap gap-2">
+                          {COLOR_OPTIONS.map((colorOpt) => (
+                            <button
+                              key={colorOpt.name}
+                              onClick={() => setNewCategoryColor(colorOpt.name)}
+                              className={`p-2.5 rounded-lg border-2 transition-all ${colorOpt.bgColor} ${
+                                newCategoryColor === colorOpt.name
+                                  ? 'border-gray-800 ring-2 ring-gray-400'
+                                  : `${colorOpt.borderColor} hover:border-gray-400`
+                              }`}
+                            >
+                              <Palette className={`h-5 w-5 ${colorOpt.color}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={handleCancelCategoryEdit}
+                          disabled={categoryActionLoading}
+                          className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleAddCategory}
+                          disabled={categoryActionLoading || !newCategoryName.trim()}
+                          className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                        >
+                          {categoryActionLoading ? (
+                            <>
+                              <Loader className="h-4 w-4 animate-spin" />
+                              Creating...
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4" />
+                              Create Category
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowAddCategory(true);
+                      setEditingCategory(null);
+                    }}
+                    className="w-full p-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Plus className="h-5 w-5" />
+                    Add New Category
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => {
+                  setShowCategoryManager(false);
+                  handleCancelCategoryEdit();
+                }}
+                className="w-full px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                Done
               </button>
             </div>
           </div>

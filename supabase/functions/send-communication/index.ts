@@ -17,6 +17,7 @@ interface SendCommunicationRequest {
   message: string;
   senderName?: string;
   senderEmail?: string;
+  sendCopyToSender?: boolean;
 }
 
 Deno.serve(async (req: Request) => {
@@ -28,7 +29,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { type, recipients, subject, message, senderName, senderEmail }: SendCommunicationRequest = await req.json();
+    const { type, recipients, subject, message, senderName, senderEmail, sendCopyToSender = true }: SendCommunicationRequest = await req.json();
 
     if (!type || !recipients || !message) {
       return new Response(
@@ -102,6 +103,44 @@ Deno.serve(async (req: Request) => {
           }
         } catch (error) {
           errors.push({ recipient: recipient.name, error: error.message });
+        }
+      }
+
+      if (sendCopyToSender && senderEmail) {
+        const recipientNames = recipients.map(r => r.name).join(', ');
+        try {
+          const copyResponse = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: 'Evident Title <noreply@evidenttitle.com>',
+              to: senderEmail,
+              subject: `[Copy] ${subject || 'Message from Evident Title'}`,
+              html: `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <h2 style="color: #1e40af;">Copy of Your Sent Message</h2>
+                  <p style="color: #64748b; font-size: 14px; margin-bottom: 20px;">
+                    This is a copy of the message you sent to: <strong>${recipientNames}</strong>
+                  </p>
+                  <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    ${message.split('\n').map(line => `<p style="margin: 8px 0;">${line}</p>`).join('')}
+                  </div>
+                  <p style="color: #64748b; font-size: 12px; margin-top: 30px;">
+                    This is an automated copy from the Evident Edge system.
+                  </p>
+                </div>
+              `,
+            }),
+          });
+
+          if (!copyResponse.ok) {
+            console.error('Failed to send copy to sender');
+          }
+        } catch (error) {
+          console.error('Error sending copy to sender:', error);
         }
       }
     } else if (type === 'sms') {
