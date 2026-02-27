@@ -1,8 +1,25 @@
 import { useState, useEffect } from 'react';
-import { Upload, Loader, AlertCircle } from 'lucide-react';
+import { Upload, Loader, AlertCircle, FileText, Video, Link } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
+
+type ResourceType = 'pdf' | 'video' | 'link';
+
+const ALLOWED_FILE_TYPES = {
+  pdf: {
+    mimeTypes: ['application/pdf'],
+    extensions: ['.pdf'],
+    label: 'PDF',
+    maxSize: 10 * 1024 * 1024,
+  },
+  video: {
+    mimeTypes: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv'],
+    extensions: ['.mp4', '.webm', '.mov', '.avi', '.wmv'],
+    label: 'Video',
+    maxSize: 100 * 1024 * 1024,
+  }
+};
 
 interface ResourceCategory {
   id: string;
@@ -22,10 +39,14 @@ export function UploadResource() {
     title: string;
     category: string;
     file: File | null;
+    fileType: ResourceType;
+    url: string;
   }>({
     title: '',
     category: '',
     file: null,
+    fileType: 'pdf',
+    url: '',
   });
 
   useEffect(() => {
@@ -56,12 +77,18 @@ export function UploadResource() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.type !== 'application/pdf') {
-        setUploadError('Please select a PDF file');
+      const config = ALLOWED_FILE_TYPES[uploadForm.fileType];
+      const isValidType = config.mimeTypes.includes(file.type) ||
+        config.extensions.some(ext => file.name.toLowerCase().endsWith(ext));
+
+      if (!isValidType) {
+        setUploadError(`Please select a valid ${config.label} file (${config.extensions.join(', ')})`);
         return;
       }
-      if (file.size > 10 * 1024 * 1024) {
-        setUploadError('File size must be less than 10MB');
+
+      const maxSizeMB = config.maxSize / (1024 * 1024);
+      if (file.size > config.maxSize) {
+        setUploadError(`File size must be less than ${maxSizeMB}MB`);
         return;
       }
       setUploadForm({ ...uploadForm, file });
@@ -69,51 +96,92 @@ export function UploadResource() {
     }
   };
 
+  const handleFileTypeChange = (fileType: ResourceType) => {
+    setUploadForm({ ...uploadForm, fileType, file: null, url: '' });
+    setUploadError(null);
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+  };
+
+  const isValidUrl = (urlString: string): boolean => {
+    try {
+      const url = new URL(urlString);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!uploadForm.file || !uploadForm.title.trim() || !salesPerson?.id || !uploadForm.category) return;
+    if (!uploadForm.title.trim() || !salesPerson?.id || !uploadForm.category) return;
+
+    if (uploadForm.fileType === 'link') {
+      if (!uploadForm.url.trim() || !isValidUrl(uploadForm.url.trim())) {
+        setUploadError('Please enter a valid URL (starting with http:// or https://)');
+        return;
+      }
+    } else {
+      if (!uploadForm.file) return;
+    }
 
     setUploading(true);
     setUploadError(null);
 
     try {
-      const fileName = `${Date.now()}_${uploadForm.file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      const filePath = `${uploadForm.category}/${fileName}`;
+      if (uploadForm.fileType === 'link') {
+        const { error: dbError } = await supabase
+          .from('resources')
+          .insert({
+            title: uploadForm.title.trim(),
+            category: uploadForm.category,
+            file_path: uploadForm.url.trim(),
+            file_size: 0,
+            uploaded_by: salesPerson.id,
+          });
 
-      const { error: uploadErr } = await supabase.storage
-        .from('resources')
-        .upload(filePath, uploadForm.file);
+        if (dbError) throw dbError;
+      } else {
+        const fileName = `${Date.now()}_${uploadForm.file!.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+        const filePath = `${uploadForm.category}/${fileName}`;
 
-      if (uploadErr) throw uploadErr;
+        const { error: uploadErr } = await supabase.storage
+          .from('resources')
+          .upload(filePath, uploadForm.file!);
 
-      const { error: dbError } = await supabase
-        .from('resources')
-        .insert({
-          title: uploadForm.title.trim(),
-          category: uploadForm.category,
-          file_path: filePath,
-          file_size: uploadForm.file.size,
-          uploaded_by: salesPerson.id,
-        });
+        if (uploadErr) throw uploadErr;
 
-      if (dbError) {
-        await supabase.storage.from('resources').remove([filePath]);
-        throw dbError;
+        const { error: dbError } = await supabase
+          .from('resources')
+          .insert({
+            title: uploadForm.title.trim(),
+            category: uploadForm.category,
+            file_path: filePath,
+            file_size: uploadForm.file!.size,
+            uploaded_by: salesPerson.id,
+          });
+
+        if (dbError) {
+          await supabase.storage.from('resources').remove([filePath]);
+          throw dbError;
+        }
       }
 
       setUploadForm({
         title: '',
         category: categories.length > 0 ? categories[0].name : '',
         file: null,
+        fileType: 'pdf',
+        url: '',
       });
 
       const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
       if (fileInput) fileInput.value = '';
 
-      setNotification({ type: 'success', message: 'Resource uploaded successfully!' });
+      setNotification({ type: 'success', message: 'Resource added successfully!' });
     } catch (error: unknown) {
       console.error('Error uploading resource:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to upload resource';
+      const errorMessage = error instanceof Error ? error.message : 'Failed to add resource';
       setUploadError(errorMessage);
     } finally {
       setUploading(false);
@@ -167,17 +235,84 @@ export function UploadResource() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              PDF File (Max 10MB)
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Resource Type
             </label>
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={handleFileChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
-              required
-            />
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => handleFileTypeChange('pdf')}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                  uploadForm.fileType === 'pdf'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                }`}
+              >
+                <FileText className="h-5 w-5" />
+                <span className="font-medium">PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFileTypeChange('video')}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                  uploadForm.fileType === 'video'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                }`}
+              >
+                <Video className="h-5 w-5" />
+                <span className="font-medium">Video</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFileTypeChange('link')}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                  uploadForm.fileType === 'link'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                }`}
+              >
+                <Link className="h-5 w-5" />
+                <span className="font-medium">Link</span>
+              </button>
+            </div>
           </div>
+          {uploadForm.fileType === 'link' ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Website URL
+              </label>
+              <input
+                type="url"
+                value={uploadForm.url}
+                onChange={(e) => setUploadForm({ ...uploadForm, url: e.target.value })}
+                placeholder="https://example.com"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Enter the full URL including https://
+              </p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {uploadForm.fileType === 'pdf' ? 'PDF File (Max 10MB)' : 'Video File (Max 100MB)'}
+              </label>
+              <input
+                type="file"
+                accept={uploadForm.fileType === 'pdf' ? '.pdf' : '.mp4,.webm,.mov,.avi,.wmv'}
+                onChange={handleFileChange}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+                required
+              />
+              {uploadForm.fileType === 'video' && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Supported formats: MP4, WebM, MOV, AVI, WMV
+                </p>
+              )}
+            </div>
+          )}
           {uploadError && (
             <div className="flex items-center gap-2 text-red-600 text-sm">
               <AlertCircle className="h-4 w-4" />
@@ -186,18 +321,23 @@ export function UploadResource() {
           )}
           <button
             type="submit"
-            disabled={uploading || !uploadForm.file || !uploadForm.title.trim() || !uploadForm.category}
+            disabled={
+              uploading ||
+              !uploadForm.title.trim() ||
+              !uploadForm.category ||
+              (uploadForm.fileType === 'link' ? !uploadForm.url.trim() : !uploadForm.file)
+            }
             className="w-full bg-rose-600 text-white py-2 px-4 rounded-lg hover:bg-rose-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {uploading ? (
               <>
                 <Loader className="h-5 w-5 animate-spin" />
-                Uploading...
+                {uploadForm.fileType === 'link' ? 'Adding...' : 'Uploading...'}
               </>
             ) : (
               <>
-                <Upload className="h-5 w-5" />
-                Upload Resource
+                {uploadForm.fileType === 'link' ? <Link className="h-5 w-5" /> : <Upload className="h-5 w-5" />}
+                {uploadForm.fileType === 'link' ? 'Add Link' : 'Upload Resource'}
               </>
             )}
           </button>

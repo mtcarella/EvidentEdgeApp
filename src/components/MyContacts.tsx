@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, Edit2, X, Save, Loader, ArrowUpDown, ArrowUp, ArrowDown, Search, Eye, Download, ChevronDown, ChevronUp, Mail, CheckSquare, Square } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { User, Users, Briefcase, Scale, Wrench, Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -8,6 +8,7 @@ import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
 import { formatDateShort, getESTToday, getTodayDateString } from '../lib/dateUtils';
+import { convertToJpeg, isImageFile } from '../lib/imageUtils';
 import * as XLSX from 'xlsx';
 
 interface Contact {
@@ -59,8 +60,31 @@ export function MyContacts() {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewingContactId, setViewingContactId] = useState<string | null>(null);
   const [exportLoading, setExportLoading] = useState(false);
-  const [expandedContacts, setExpandedContacts] = useState<Set<string>>(new Set());
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [quickMeetingContactId, setQuickMeetingContactId] = useState<string | null>(null);
+  const [quickMeetingDate, setQuickMeetingDate] = useState(getTodayDateString());
+  const [quickMeetingNotes, setQuickMeetingNotes] = useState('');
+  const [quickMeetingIsMeeting, setQuickMeetingIsMeeting] = useState(false);
+  const [quickMeetingIsText, setQuickMeetingIsText] = useState(false);
+  const [quickMeetingIsCall, setQuickMeetingIsCall] = useState(false);
+  const [quickMeetingIsEmail, setQuickMeetingIsEmail] = useState(false);
+  const [quickMeetingHasExpense, setQuickMeetingHasExpense] = useState<boolean | null>(null);
+  const [quickMeetingExpenseMethod, setQuickMeetingExpenseMethod] = useState('');
+  const [quickMeetingExpenseAmount, setQuickMeetingExpenseAmount] = useState('');
+  const [quickMeetingReceiptFiles, setQuickMeetingReceiptFiles] = useState<File[]>([]);
+  const [quickMeetingSaving, setQuickMeetingSaving] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setOpenDropdownId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     loadContacts();
@@ -213,6 +237,104 @@ export function MyContacts() {
     const separator = isWindows ? ';' : ',';
     const encodedEmails = selectedEmails.map(email => encodeURIComponent(email as string)).join(separator);
     window.location.href = `mailto:?bcc=${encodedEmails}`;
+  };
+
+  const resetQuickMeetingForm = () => {
+    setQuickMeetingContactId(null);
+    setQuickMeetingDate(getTodayDateString());
+    setQuickMeetingNotes('');
+    setQuickMeetingIsMeeting(false);
+    setQuickMeetingIsText(false);
+    setQuickMeetingIsCall(false);
+    setQuickMeetingIsEmail(false);
+    setQuickMeetingHasExpense(null);
+    setQuickMeetingExpenseMethod('');
+    setQuickMeetingExpenseAmount('');
+    setQuickMeetingReceiptFiles([]);
+  };
+
+  const handleQuickMeetingSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!salesPerson?.id || !quickMeetingContactId || !quickMeetingNotes.trim() || quickMeetingHasExpense === null) return;
+
+    setQuickMeetingSaving(true);
+    try {
+      const uploadedReceipts: { filePath: string; fileName: string }[] = [];
+
+      if (quickMeetingReceiptFiles.length > 0) {
+        for (const receiptFile of quickMeetingReceiptFiles) {
+          let fileToUpload = receiptFile;
+          const isImage = receiptFile.type.startsWith('image/');
+
+          if (isImage && isImageFile(receiptFile)) {
+            try {
+              fileToUpload = await convertToJpeg(receiptFile);
+            } catch (error) {
+              console.error('Failed to convert image to JPEG:', error);
+              throw new Error('Failed to process receipt image. Please try again.');
+            }
+          }
+
+          const fileName = `${salesPerson.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpeg`;
+          const filePath = `${fileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('receipts')
+            .upload(filePath, fileToUpload);
+
+          if (uploadError) throw uploadError;
+          uploadedReceipts.push({ filePath, fileName: receiptFile.name });
+        }
+      }
+
+      const meetingData = {
+        contact_id: quickMeetingContactId,
+        salesperson_id: salesPerson.id,
+        meeting_date: quickMeetingDate,
+        notes: quickMeetingNotes,
+        is_meeting: quickMeetingIsMeeting,
+        is_text: quickMeetingIsText,
+        is_call: quickMeetingIsCall,
+        is_email: quickMeetingIsEmail,
+        has_expense: quickMeetingHasExpense,
+        expense_payment_method: quickMeetingHasExpense ? quickMeetingExpenseMethod : null,
+        expense_amount: quickMeetingHasExpense && quickMeetingExpenseAmount ? parseFloat(quickMeetingExpenseAmount) : null,
+        receipt_url: quickMeetingHasExpense && uploadedReceipts.length > 0 ? uploadedReceipts[0].filePath : null,
+        created_by: salesPerson.user_id,
+      };
+
+      const { data: insertedMeeting, error } = await supabase
+        .from('meetings')
+        .insert(meetingData)
+        .select('id')
+        .single();
+
+      if (error) throw error;
+
+      if (insertedMeeting && uploadedReceipts.length > 0 && quickMeetingHasExpense) {
+        const receiptsToInsert = uploadedReceipts.map(receipt => ({
+          meeting_id: insertedMeeting.id,
+          file_path: receipt.filePath,
+          file_name: receipt.fileName,
+          created_by: salesPerson.user_id,
+        }));
+
+        await supabase.from('meeting_receipts').insert(receiptsToInsert);
+      }
+
+      resetQuickMeetingForm();
+      alert('Meeting logged successfully!');
+    } catch (error: any) {
+      console.error('Error adding meeting:', error);
+      alert('Failed to log meeting: ' + error.message);
+    } finally {
+      setQuickMeetingSaving(false);
+    }
+  };
+
+  const openQuickMeetingForm = (contactId: string) => {
+    setOpenDropdownId(null);
+    setQuickMeetingContactId(contactId);
   };
 
   const exportMyContacts = async () => {
@@ -748,31 +870,14 @@ export function MyContacts() {
                       </div>
                       <div className="flex gap-1 sm:gap-2 flex-shrink-0">
                         <button
-                          onClick={() => {
-                            const newExpanded = new Set(expandedContacts);
-                            if (newExpanded.has(contact.id)) {
-                              newExpanded.delete(contact.id);
-                            } else {
-                              newExpanded.add(contact.id);
-                            }
-                            setExpandedContacts(newExpanded);
-                          }}
-                          className={`flex items-center bg-slate-600 hover:bg-slate-700 text-white rounded-lg transition-colors ${
-                            isMobile ? 'p-2' : 'gap-1 px-3 py-1.5 text-sm'
+                          onClick={() => openQuickMeetingForm(contact.id)}
+                          className={`flex items-center bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors shadow-sm ${
+                            isMobile ? 'p-2' : 'gap-1.5 px-3 py-1.5 text-sm font-medium'
                           }`}
-                          title={expandedContacts.has(contact.id) ? 'Collapse' : 'Expand'}
+                          title="Log Meeting"
                         >
-                          {expandedContacts.has(contact.id) ? (
-                            <>
-                              <ChevronUp className="w-4 h-4" />
-                              {!isMobile && 'Collapse'}
-                            </>
-                          ) : (
-                            <>
-                              <ChevronDown className="w-4 h-4" />
-                              {!isMobile && 'Expand'}
-                            </>
-                          )}
+                          <Calendar className="w-4 h-4" />
+                          {!isMobile && 'Log Meeting'}
                         </button>
                         <button
                           onClick={() => setViewingContactId(contact.id)}
@@ -796,49 +901,6 @@ export function MyContacts() {
                         </button>
                       </div>
                     </div>
-
-                    {expandedContacts.has(contact.id) && (
-                      <div className="mt-4 pt-4 border-t border-slate-200">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                          {contact.branch && (
-                            <div>
-                              <span className="font-medium text-slate-700">Branch:</span>
-                              <span className="ml-2 text-slate-600">{contact.branch}</span>
-                            </div>
-                          )}
-                          {contact.company && (
-                            <div>
-                              <span className="font-medium text-slate-700">Company:</span>
-                              <span className="ml-2 text-slate-600">{contact.company}</span>
-                            </div>
-                          )}
-                          {contact.client_paralegal_processor && (
-                            <div className="md:col-span-2">
-                              <span className="font-medium text-slate-700">Client Paralegal/Processor:</span>
-                              <span className="ml-2 text-slate-600">{contact.client_paralegal_processor}</span>
-                            </div>
-                          )}
-                          {contact.evident_paralegal && (
-                            <div className="md:col-span-2">
-                              <span className="font-medium text-slate-700">Evident Paralegal:</span>
-                              <span className="ml-2 text-slate-600">{contact.evident_paralegal}</span>
-                            </div>
-                          )}
-                          {contact.address && (
-                            <div className="md:col-span-2">
-                              <span className="font-medium text-slate-700">Address:</span>
-                              <span className="ml-2 text-slate-600">{contact.address}</span>
-                            </div>
-                          )}
-                          {contact.notes && (
-                            <div className="md:col-span-2">
-                              <span className="font-medium text-slate-700">Notes:</span>
-                              <p className="mt-1 text-slate-600">{contact.notes}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -872,6 +934,233 @@ export function MyContacts() {
           }}
           onCancel={() => setEditingContact(null)}
         />
+      )}
+
+      {quickMeetingContactId && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-100 rounded-lg">
+                  <Calendar className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Log Meeting</h3>
+                  <p className="text-sm text-slate-500">
+                    {contacts.find(c => c.id === quickMeetingContactId)?.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={resetQuickMeetingForm}
+                className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-slate-600" />
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickMeetingSubmit} className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+                <input
+                  type="date"
+                  value={quickMeetingDate}
+                  onChange={(e) => setQuickMeetingDate(e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Meeting Type</label>
+                <div className="flex flex-wrap gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={quickMeetingIsMeeting}
+                      onChange={(e) => setQuickMeetingIsMeeting(e.target.checked)}
+                      className="w-4 h-4 text-amber-600 border-slate-300 rounded focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-slate-700">In-Person</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={quickMeetingIsCall}
+                      onChange={(e) => setQuickMeetingIsCall(e.target.checked)}
+                      className="w-4 h-4 text-amber-600 border-slate-300 rounded focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-slate-700">Call</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={quickMeetingIsText}
+                      onChange={(e) => setQuickMeetingIsText(e.target.checked)}
+                      className="w-4 h-4 text-amber-600 border-slate-300 rounded focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-slate-700">Text</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={quickMeetingIsEmail}
+                      onChange={(e) => setQuickMeetingIsEmail(e.target.checked)}
+                      className="w-4 h-4 text-amber-600 border-slate-300 rounded focus:ring-amber-500"
+                    />
+                    <span className="text-sm text-slate-700">Email</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+                <textarea
+                  value={quickMeetingNotes}
+                  onChange={(e) => setQuickMeetingNotes(e.target.value)}
+                  rows={3}
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                  placeholder="Enter meeting notes..."
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Expense?</label>
+                <div className="flex gap-4">
+                  <label className={`flex-1 p-3 border-2 rounded-lg cursor-pointer text-center transition-all ${
+                    quickMeetingHasExpense === true ? 'border-amber-500 bg-amber-50' : 'border-slate-200 hover:border-slate-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="hasExpense"
+                      checked={quickMeetingHasExpense === true}
+                      onChange={() => setQuickMeetingHasExpense(true)}
+                      className="sr-only"
+                    />
+                    <span className="text-sm font-medium">Yes</span>
+                  </label>
+                  <label className={`flex-1 p-3 border-2 rounded-lg cursor-pointer text-center transition-all ${
+                    quickMeetingHasExpense === false ? 'border-amber-500 bg-amber-50' : 'border-slate-200 hover:border-slate-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="hasExpense"
+                      checked={quickMeetingHasExpense === false}
+                      onChange={() => setQuickMeetingHasExpense(false)}
+                      className="sr-only"
+                    />
+                    <span className="text-sm font-medium">No</span>
+                  </label>
+                </div>
+              </div>
+
+              {quickMeetingHasExpense && (
+                <div className="space-y-4 p-4 bg-slate-50 rounded-lg">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                    <select
+                      value={quickMeetingExpenseMethod}
+                      onChange={(e) => setQuickMeetingExpenseMethod(e.target.value)}
+                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                    >
+                      <option value="">Select method...</option>
+                      <option value="Corporate Card">Corporate Card</option>
+                      <option value="Personal Card">Personal Card</option>
+                      <option value="Cash">Cash</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={quickMeetingExpenseAmount}
+                        onChange={(e) => setQuickMeetingExpenseAmount(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Receipt(s)</label>
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                        <Upload className="w-4 h-4 text-slate-600" />
+                        <span className="text-sm text-slate-700">Upload</span>
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          multiple
+                          onChange={(e) => {
+                            if (e.target.files) {
+                              setQuickMeetingReceiptFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+                            }
+                          }}
+                          className="sr-only"
+                        />
+                      </label>
+                      {quickMeetingReceiptFiles.length > 0 && (
+                        <span className="text-sm text-slate-600">
+                          {quickMeetingReceiptFiles.length} file(s) selected
+                        </span>
+                      )}
+                    </div>
+                    {quickMeetingReceiptFiles.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {quickMeetingReceiptFiles.map((file, index) => (
+                          <div key={index} className="flex items-center justify-between text-sm bg-white px-3 py-1.5 rounded border border-slate-200">
+                            <span className="truncate">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setQuickMeetingReceiptFiles(prev => prev.filter((_, i) => i !== index))}
+                              className="text-red-500 hover:text-red-700 ml-2"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={resetQuickMeetingForm}
+                  disabled={quickMeetingSaving}
+                  className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={quickMeetingSaving || !quickMeetingNotes.trim() || quickMeetingHasExpense === null}
+                  className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+                >
+                  {quickMeetingSaving ? (
+                    <>
+                      <Loader className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Calendar className="w-4 h-4" />
+                      Log Meeting
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

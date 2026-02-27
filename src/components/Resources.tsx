@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -96,6 +96,7 @@ export function Resources() {
   const [newCategoryColor, setNewCategoryColor] = useState('emerald');
   const [categoryActionLoading, setCategoryActionLoading] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
+  const [resourceSearchTerm, setResourceSearchTerm] = useState('');
 
   useEffect(() => {
     fetchCategories();
@@ -110,11 +111,6 @@ export function Resources() {
     }
   }, [salesPerson?.id]);
 
-  useEffect(() => {
-    if (categories.length > 0 && expandedCategories.size === 0) {
-      setExpandedCategories(new Set(categories.map(c => c.name)));
-    }
-  }, [categories]);
 
   const fetchCategories = async () => {
     const { data, error } = await supabase
@@ -245,10 +241,11 @@ export function Resources() {
 
       if (error) throw error;
 
+      const ext = resource.file_path.split('.').pop() || 'pdf';
       const url = URL.createObjectURL(data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${resource.title}.pdf`;
+      a.download = `${resource.title}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -423,6 +420,26 @@ export function Resources() {
     }
   };
 
+  const handleSelectAllContacts = () => {
+    const contactEmails = filteredContacts
+      .filter(c => c.email)
+      .map(c => c.email.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (contactEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...contactEmails]);
+    }
+  };
+
+  const handleSelectAllUsers = () => {
+    const userEmails = filteredEmailUsers
+      .filter(u => u.email)
+      .map(u => u.email.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (userEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...userEmails]);
+    }
+  };
+
   const handleSendEmail = async () => {
     if (!emailResource || emailRecipients.length === 0) {
       setNotification({ type: 'error', message: 'Please add at least one recipient' });
@@ -516,6 +533,28 @@ export function Resources() {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  };
+
+  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'other' => {
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      return 'link';
+    }
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') return 'pdf';
+    if (['mp4', 'webm', 'mov', 'avi', 'wmv'].includes(ext || '')) return 'video';
+    return 'other';
+  };
+
+  const getFileMimeType = (filePath: string): string => {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      mp4: 'video/mp4',
+      webm: 'video/webm',
+      mov: 'video/quicktime',
+      avi: 'video/x-msvideo',
+      wmv: 'video/x-ms-wmv',
+    };
+    return mimeTypes[ext || ''] || 'video/mp4';
   };
 
   const handleAddCategory = async () => {
@@ -649,10 +688,21 @@ export function Resources() {
 
   const visibleCategories = categories.filter(c => c.is_active);
 
+  const filteredResources = resourceSearchTerm.trim()
+    ? resources.filter(r =>
+        r.title.toLowerCase().includes(resourceSearchTerm.toLowerCase()) ||
+        r.category.toLowerCase().includes(resourceSearchTerm.toLowerCase())
+      )
+    : resources;
+
   const resourcesByCategory = visibleCategories.reduce((acc, category) => {
-    acc[category.name] = resources.filter(r => r.category === category.name);
+    acc[category.name] = filteredResources.filter(r => r.category === category.name);
     return acc;
   }, {} as Record<string, Resource[]>);
+
+  const categoriesToShow = resourceSearchTerm.trim()
+    ? visibleCategories.filter(c => resourcesByCategory[c.name]?.length > 0)
+    : visibleCategories;
 
   if (loading) {
     return (
@@ -691,10 +741,43 @@ export function Resources() {
         </div>
       </div>
 
+      <div className="relative max-w-xl">
+        <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+        <input
+          type="text"
+          placeholder="Search resources by title or category..."
+          value={resourceSearchTerm}
+          onChange={(e) => setResourceSearchTerm(e.target.value)}
+          className="w-full pl-12 pr-10 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-white text-gray-900 placeholder-gray-500"
+        />
+        {resourceSearchTerm && (
+          <button
+            onClick={() => setResourceSearchTerm('')}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {resourceSearchTerm.trim() && filteredResources.length === 0 && (
+        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+          <Search className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+          <p className="text-gray-500 text-lg">No resources found matching "{resourceSearchTerm}"</p>
+          <p className="text-gray-400 text-sm mt-1">Try a different search term</p>
+        </div>
+      )}
+
+      {resourceSearchTerm.trim() && filteredResources.length > 0 && (
+        <p className="text-sm text-gray-500">
+          Found {filteredResources.length} resource{filteredResources.length !== 1 ? 's' : ''} matching "{resourceSearchTerm}"
+        </p>
+      )}
+
       <div className="grid gap-5">
-        {visibleCategories.map(category => {
+        {categoriesToShow.map(category => {
           const categoryResources = resourcesByCategory[category.name] || [];
-          const isExpanded = expandedCategories.has(category.name);
+          const isExpanded = resourceSearchTerm.trim() ? true : expandedCategories.has(category.name);
           const colorConfig = getColorConfig(category.color);
           const IconComponent = ICON_OPTIONS[category.icon] || FileText;
 
@@ -739,44 +822,97 @@ export function Resources() {
                   ) : (
                     <div className="p-3">
                       <div className="space-y-2">
-                        {categoryResources.map(resource => (
+                        {categoryResources.map(resource => {
+                          const fileType = getFileType(resource.file_path);
+                          const isVideo = fileType === 'video';
+                          const isLink = fileType === 'link';
+                          return (
                           <div
                             key={resource.id}
                             className="group flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50/50 transition-all duration-150"
                           >
                             <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <div className="p-2 rounded-lg bg-gray-100 group-hover:bg-white group-hover:shadow-sm transition-all duration-150">
-                                <FileText className="h-4 w-4 text-gray-500" />
+                              <div className={`p-2 rounded-lg group-hover:bg-white group-hover:shadow-sm transition-all duration-150 ${
+                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : 'bg-gray-100'
+                              }`}>
+                                {isLink ? (
+                                  <Link className="h-4 w-4 text-emerald-600" />
+                                ) : isVideo ? (
+                                  <Video className="h-4 w-4 text-blue-600" />
+                                ) : (
+                                  <FileText className="h-4 w-4 text-gray-500" />
+                                )}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <h4 className="font-medium text-gray-900 truncate text-sm">{resource.title}</h4>
+                                <div className="flex items-center gap-2">
+                                  {isLink ? (
+                                    <a
+                                      href={resource.file_path}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-emerald-600 hover:text-emerald-700 hover:underline truncate text-sm"
+                                    >
+                                      {resource.title}
+                                    </a>
+                                  ) : (
+                                    <h4 className="font-medium text-gray-900 truncate text-sm">{resource.title}</h4>
+                                  )}
+                                  {isLink && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded flex-shrink-0">
+                                      Link
+                                    </span>
+                                  )}
+                                  {isVideo && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded flex-shrink-0">
+                                      Video
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-xs text-gray-400 mt-0.5">
-                                  {formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}
+                                  {isLink ? (
+                                    <span className="truncate block max-w-xs">{new Date(resource.created_at).toLocaleDateString()}</span>
+                                  ) : (
+                                    <>{formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}</>
+                                  )}
                                 </p>
                               </div>
                             </div>
                             <div className="flex items-center gap-1 ml-3 opacity-70 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => handlePreview(resource)}
-                                className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                                title="View PDF"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => handleDownload(resource)}
-                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="Download"
-                              >
-                                <Download className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={() => handleEmailClick(resource)}
-                                className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
-                                title="Email Document"
-                              >
-                                <Mail className="h-4 w-4" />
-                              </button>
+                              {isLink ? (
+                                <a
+                                  href={resource.file_path}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                  title="Open Link"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handlePreview(resource)}
+                                    className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                    title={isVideo ? 'Play Video' : 'View PDF'}
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDownload(resource)}
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                    title="Download"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleEmailClick(resource)}
+                                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="Email Document"
+                                  >
+                                    <Mail className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
                               {isAdmin && (
                                 <>
                                   <button
@@ -797,7 +933,8 @@ export function Resources() {
                               )}
                             </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     </div>
                   )}
@@ -824,7 +961,19 @@ export function Resources() {
               </button>
             </div>
             <div className="flex-1 overflow-auto -webkit-overflow-scrolling-touch">
-              {isMobile ? (
+              {getFileType(previewResource.file_path) === 'video' ? (
+                <div className="w-full h-full flex items-center justify-center bg-black p-4">
+                  <video
+                    src={previewUrl}
+                    controls
+                    autoPlay
+                    className="max-w-full max-h-full rounded-lg"
+                    style={{ maxHeight: 'calc(95vh - 80px)' }}
+                  >
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+              ) : isMobile ? (
                 <iframe
                   src={`${previewUrl}#toolbar=0&view=FitH`}
                   className="w-full h-full border-0"
@@ -991,10 +1140,26 @@ export function Resources() {
 
                   {myContacts.length > 0 && (
                     <div>
-                      <label className="text-sm text-gray-600 mb-1 flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        My Contacts ({myContacts.length})
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-sm text-gray-600 flex items-center gap-2">
+                          <Users className="w-4 h-4" />
+                          My Contacts ({myContacts.length})
+                        </label>
+                        {filteredContacts.length > 0 && (
+                          <button
+                            onClick={handleSelectAllContacts}
+                            disabled={filteredContacts.every(c => emailRecipients.includes(c.email.toLowerCase()))}
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                          >
+                            {filteredContacts.every(c => emailRecipients.includes(c.email.toLowerCase())) ? (
+                              <CheckSquare className="w-3.5 h-3.5" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5" />
+                            )}
+                            Select All
+                          </button>
+                        )}
+                      </div>
                       <div className="relative mb-2">
                         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                         <input
@@ -1085,7 +1250,23 @@ export function Resources() {
                   )}
 
                   <div>
-                    <label className="text-sm text-gray-600 mb-1 block">Team members</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm text-gray-600">Team members</label>
+                      {filteredEmailUsers.length > 0 && (
+                        <button
+                          onClick={handleSelectAllUsers}
+                          disabled={filteredEmailUsers.every(u => emailRecipients.includes(u.email.toLowerCase()))}
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                        >
+                          {filteredEmailUsers.every(u => emailRecipients.includes(u.email.toLowerCase())) ? (
+                            <CheckSquare className="w-3.5 h-3.5" />
+                          ) : (
+                            <Square className="w-3.5 h-3.5" />
+                          )}
+                          Select All
+                        </button>
+                      )}
+                    </div>
                     <div className="relative mb-2">
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                       <input
