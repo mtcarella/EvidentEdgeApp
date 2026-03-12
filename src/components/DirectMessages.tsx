@@ -247,95 +247,111 @@ export function DirectMessages() {
 
     const conversationIds = participations.map(p => p.conversation_id);
 
-    const { data: convData, error: convError } = await supabase
-      .from('conversations')
-      .select('*')
-      .in('id', conversationIds)
-      .order('last_message_at', { ascending: false });
+    const [convResult, allParticipantsResult, lastMessagesResult, allIncomingMessagesResult, readMessagesResult, allUsersResult] = await Promise.all([
+      supabase
+        .from('conversations')
+        .select('*')
+        .in('id', conversationIds)
+        .order('last_message_at', { ascending: false }),
+      supabase
+        .from('conversation_participants')
+        .select('conversation_id, user_id')
+        .in('conversation_id', conversationIds),
+      supabase
+        .from('direct_messages')
+        .select('conversation_id, content, created_at')
+        .in('conversation_id', conversationIds)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('direct_messages')
+        .select('id, conversation_id')
+        .in('conversation_id', conversationIds)
+        .neq('sender_id', user.id),
+      supabase
+        .from('message_reads')
+        .select('message_id')
+        .eq('user_id', user.id),
+      supabase
+        .from('sales_people')
+        .select('user_id, name, email')
+        .eq('is_active', true)
+    ]);
 
-    if (convError || !convData) {
+    if (convResult.error || !convResult.data) {
       setConversations([]);
       setLoading(false);
       return;
     }
 
-    const conversationsWithDetails = await Promise.all(
-      convData.map(async (conv) => {
-        const { data: participants } = await supabase
-          .from('conversation_participants')
-          .select('user_id')
-          .eq('conversation_id', conv.id);
+    const participantsByConv = new Map<string, string[]>();
+    allParticipantsResult.data?.forEach(p => {
+      const existing = participantsByConv.get(p.conversation_id) || [];
+      existing.push(p.user_id);
+      participantsByConv.set(p.conversation_id, existing);
+    });
 
-        const otherParticipants = participants?.filter(p => p.user_id !== user.id) || [];
-        const isGroup = conv.is_group || otherParticipants.length > 1;
+    const lastMessageByConv = new Map<string, string>();
+    const seenConvs = new Set<string>();
+    lastMessagesResult.data?.forEach(m => {
+      if (!seenConvs.has(m.conversation_id)) {
+        lastMessageByConv.set(m.conversation_id, m.content);
+        seenConvs.add(m.conversation_id);
+      }
+    });
 
-        let otherUserName = 'Unknown';
-        let otherUserEmail = '';
-        let otherUserId = '';
-        let participantNames: string[] = [];
+    const messagesByConv = new Map<string, string[]>();
+    allIncomingMessagesResult.data?.forEach(m => {
+      const existing = messagesByConv.get(m.conversation_id) || [];
+      existing.push(m.id);
+      messagesByConv.set(m.conversation_id, existing);
+    });
 
-        if (isGroup) {
-          const otherUserIds = otherParticipants.map(p => p.user_id);
-          const { data: usersData } = await supabase
-            .from('sales_people')
-            .select('name')
-            .in('user_id', otherUserIds);
+    const readMessageIds = new Set(readMessagesResult.data?.map(r => r.message_id) || []);
 
-          participantNames = usersData?.map(u => u.name) || [];
-          otherUserName = conv.group_name || participantNames.slice(0, 3).join(', ') + (participantNames.length > 3 ? ` +${participantNames.length - 3}` : '');
-          otherUserEmail = `${participantNames.length} participants`;
-        } else {
-          otherUserId = otherParticipants[0]?.user_id || '';
-          if (otherUserId) {
-            const { data: userData } = await supabase
-              .from('sales_people')
-              .select('name, email')
-              .eq('user_id', otherUserId)
-              .maybeSingle();
+    const usersMap = new Map<string, { name: string; email: string }>();
+    allUsersResult.data?.forEach(u => {
+      usersMap.set(u.user_id, { name: u.name, email: u.email });
+    });
 
-            if (userData) {
-              otherUserName = userData.name;
-              otherUserEmail = userData.email;
-            }
-          }
+    const conversationsWithDetails = convResult.data.map(conv => {
+      const allParticipants = participantsByConv.get(conv.id) || [];
+      const otherParticipants = allParticipants.filter(uid => uid !== user.id);
+      const isGroup = conv.is_group || otherParticipants.length > 1;
+
+      let otherUserName = 'Unknown';
+      let otherUserEmail = '';
+      let otherUserId = '';
+      let participantNames: string[] = [];
+
+      if (isGroup) {
+        participantNames = otherParticipants.map(uid => usersMap.get(uid)?.name || 'Unknown');
+        otherUserName = conv.group_name || participantNames.slice(0, 3).join(', ') + (participantNames.length > 3 ? ` +${participantNames.length - 3}` : '');
+        otherUserEmail = `${participantNames.length} participants`;
+      } else {
+        otherUserId = otherParticipants[0] || '';
+        const userData = usersMap.get(otherUserId);
+        if (userData) {
+          otherUserName = userData.name;
+          otherUserEmail = userData.email;
         }
+      }
 
-        const { data: lastMsg } = await supabase
-          .from('direct_messages')
-          .select('content')
-          .eq('conversation_id', conv.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      const incomingMsgIds = messagesByConv.get(conv.id) || [];
+      const unreadCount = incomingMsgIds.filter(id => !readMessageIds.has(id)).length;
 
-        const { data: allMessages } = await supabase
-          .from('direct_messages')
-          .select('id')
-          .eq('conversation_id', conv.id)
-          .neq('sender_id', user.id);
-
-        const { data: readMessages } = await supabase
-          .from('message_reads')
-          .select('message_id')
-          .eq('user_id', user.id);
-
-        const readMessageIds = new Set(readMessages?.map(r => r.message_id) || []);
-        const unreadCount = allMessages?.filter(m => !readMessageIds.has(m.id)).length || 0;
-
-        return {
-          id: conv.id,
-          last_message_at: conv.last_message_at,
-          other_user_id: otherUserId,
-          other_user_name: otherUserName,
-          other_user_email: otherUserEmail,
-          last_message: lastMsg?.content,
-          unread_count: unreadCount,
-          is_group: isGroup,
-          group_name: conv.group_name,
-          participant_names: participantNames
-        };
-      })
-    );
+      return {
+        id: conv.id,
+        last_message_at: conv.last_message_at,
+        other_user_id: otherUserId,
+        other_user_name: otherUserName,
+        other_user_email: otherUserEmail,
+        last_message: lastMessageByConv.get(conv.id),
+        unread_count: unreadCount,
+        is_group: isGroup,
+        group_name: conv.group_name,
+        participant_names: participantNames
+      };
+    });
 
     setConversations(conversationsWithDetails);
     setLoading(false);

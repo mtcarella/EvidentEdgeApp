@@ -60,9 +60,9 @@ export function useModulePermissions(userId: string | undefined, salesPersonId: 
     };
   }, [salesPersonId, loadPermissions]);
 
-  const hasAccess = (moduleName: string): boolean => {
+  const hasAccess = useCallback((moduleName: string): boolean => {
     return permissions.has(moduleName);
-  };
+  }, [permissions]);
 
   return { hasAccess, loading, permissions, refresh: loadPermissions };
 }

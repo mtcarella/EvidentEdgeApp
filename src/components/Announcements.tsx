@@ -118,19 +118,25 @@ export function Announcements({ onNavigateToAnnouncements }: AnnouncementsProps)
 
       if (error) throw error;
 
-      const announcementsWithCreators = await Promise.all(
-        (data || []).map(async (announcement) => {
-          if (announcement.created_by) {
-            const { data: creator } = await supabase
-              .from('sales_people')
-              .select('name')
-              .eq('user_id', announcement.created_by)
-              .maybeSingle();
-            return { ...announcement, creator_name: creator?.name || 'Unknown' };
-          }
-          return { ...announcement, creator_name: 'System' };
-        })
-      );
+      const creatorIds = [...new Set((data || []).map(a => a.created_by).filter(Boolean))];
+
+      let creatorMap: Record<string, string> = {};
+      if (creatorIds.length > 0) {
+        const { data: creators } = await supabase
+          .from('sales_people')
+          .select('user_id, name')
+          .in('user_id', creatorIds);
+
+        creatorMap = (creators || []).reduce((acc, c) => {
+          acc[c.user_id] = c.name;
+          return acc;
+        }, {} as Record<string, string>);
+      }
+
+      const announcementsWithCreators = (data || []).map((announcement) => ({
+        ...announcement,
+        creator_name: announcement.created_by ? creatorMap[announcement.created_by] || 'Unknown' : 'System'
+      }));
 
       setAnnouncements(announcementsWithCreators);
     } catch (error) {

@@ -66,7 +66,13 @@ export function Dashboard() {
   const fetchUnreadCommunicationsCount = useCallback(async () => {
     if (!user?.id) return;
 
-    const isAdminUser = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
+    const { data: currentUser } = await supabase
+      .from('sales_people')
+      .select('role')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const isAdminUser = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 
     let query = supabase
       .from('communication_logs')
@@ -91,7 +97,7 @@ export function Dashboard() {
     const readIds = new Set(readComms?.map(r => r.communication_id) || []);
     const unreadCount = allComms.filter(c => !readIds.has(c.id)).length;
     setUnreadCommunicationsCount(unreadCount);
-  }, [user?.id, salesPerson?.role]);
+  }, [user?.id]);
 
   const fetchUnreadDirectMessagesCount = useCallback(async () => {
     if (!user?.id) return;
@@ -129,17 +135,20 @@ export function Dashboard() {
     setUnreadDirectMessagesCount(unreadCount);
   }, [user?.id]);
 
-  useEffect(() => {
-    if (user?.id && hasAccess('view_communications')) {
-      fetchUnreadCommunicationsCount();
-    }
-  }, [user?.id, hasAccess, fetchUnreadCommunicationsCount]);
+  const hasViewCommunications = hasAccess('view_communications');
+  const hasDirectMessages = hasAccess('direct_messages');
 
   useEffect(() => {
-    if (user?.id && hasAccess('direct_messages')) {
+    if (user?.id && hasViewCommunications) {
+      fetchUnreadCommunicationsCount();
+    }
+  }, [user?.id, hasViewCommunications, fetchUnreadCommunicationsCount]);
+
+  useEffect(() => {
+    if (user?.id && hasDirectMessages) {
       fetchUnreadDirectMessagesCount();
     }
-  }, [user?.id, hasAccess, fetchUnreadDirectMessagesCount]);
+  }, [user?.id, hasDirectMessages, fetchUnreadDirectMessagesCount]);
 
   const fetchOutOfOfficeStatuses = useCallback(async () => {
     const { data, error } = await supabase
@@ -190,12 +199,12 @@ export function Dashboard() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (user?.id && hasAccess('direct_messages')) {
+    if (user?.id && hasDirectMessages) {
       fetchOutOfOfficeStatuses();
       fetchAllUsers();
       fetchMyOOOStatus();
     }
-  }, [user?.id, hasAccess, fetchOutOfOfficeStatuses, fetchAllUsers, fetchMyOOOStatus]);
+  }, [user?.id, hasDirectMessages, fetchOutOfOfficeStatuses, fetchAllUsers, fetchMyOOOStatus]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
