@@ -286,11 +286,12 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">None</option>
+                <option value="Danielle">Danielle</option>
+                <option value="Elizabeth">Elizabeth</option>
+                <option value="Jahaira">Jahaira</option>
                 <option value="Kristen">Kristen</option>
                 <option value="Lisa">Lisa</option>
                 <option value="Raphael">Raphael</option>
-                <option value="Danielle">Danielle</option>
-                <option value="Elizabeth">Elizabeth</option>
               </select>
             </div>
             <div>
@@ -362,11 +363,12 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="">None</option>
+                    <option value="Danielle">Danielle</option>
+                    <option value="Elizabeth">Elizabeth</option>
+                    <option value="Jahaira">Jahaira</option>
                     <option value="Kristen">Kristen</option>
                     <option value="Lisa">Lisa</option>
                     <option value="Raphael">Raphael</option>
-                    <option value="Danielle">Danielle</option>
-                    <option value="Elizabeth">Elizabeth</option>
                   </select>
                 ) : (
                   <input

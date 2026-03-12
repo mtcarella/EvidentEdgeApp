@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -28,8 +28,9 @@ import SMSOptInModal from './SMSOptInModal';
 import { SMSOptInManagement } from './SMSOptInManagement';
 import { ViewCommunications } from './ViewCommunications';
 import { UploadResource } from './UploadResource';
+import { DirectMessages } from './DirectMessages';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
@@ -43,7 +44,13 @@ export function Dashboard() {
   const [showLoginAnnouncements, setShowLoginAnnouncements] = useState(false);
   const [showSMSOptIn, setShowSMSOptIn] = useState(false);
   const [unreadCommunicationsCount, setUnreadCommunicationsCount] = useState(0);
+  const [unreadDirectMessagesCount, setUnreadDirectMessagesCount] = useState(0);
+  const [showMessagesDropdown, setShowMessagesDropdown] = useState(false);
+  const [outOfOfficeStatuses, setOutOfOfficeStatuses] = useState<Record<string, { user_id: string; is_enabled: boolean; status_type: string; custom_message: string | null; end_time: string | null }>>({});
+  const [myOOOStatus, setMyOOOStatus] = useState<{ is_enabled: boolean; status_type: string; custom_message: string | null; end_time: string | null } | null>(null);
+  const [allUsers, setAllUsers] = useState<{ user_id: string; name: string; role: string }[]>([]);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
+  const messagesDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (user && salesPerson) {
@@ -86,11 +93,142 @@ export function Dashboard() {
     setUnreadCommunicationsCount(unreadCount);
   }, [user?.id, salesPerson?.role]);
 
+  const fetchUnreadDirectMessagesCount = useCallback(async () => {
+    if (!user?.id) return;
+
+    const { data: participations } = await supabase
+      .from('conversation_participants')
+      .select('conversation_id')
+      .eq('user_id', user.id);
+
+    if (!participations?.length) {
+      setUnreadDirectMessagesCount(0);
+      return;
+    }
+
+    const conversationIds = participations.map(p => p.conversation_id);
+
+    const { data: allMessages } = await supabase
+      .from('direct_messages')
+      .select('id')
+      .in('conversation_id', conversationIds)
+      .neq('sender_id', user.id);
+
+    if (!allMessages?.length) {
+      setUnreadDirectMessagesCount(0);
+      return;
+    }
+
+    const { data: readMessages } = await supabase
+      .from('message_reads')
+      .select('message_id')
+      .eq('user_id', user.id);
+
+    const readMessageIds = new Set(readMessages?.map(r => r.message_id) || []);
+    const unreadCount = allMessages.filter(m => !readMessageIds.has(m.id)).length;
+    setUnreadDirectMessagesCount(unreadCount);
+  }, [user?.id]);
+
   useEffect(() => {
     if (user?.id && hasAccess('view_communications')) {
       fetchUnreadCommunicationsCount();
     }
   }, [user?.id, hasAccess, fetchUnreadCommunicationsCount]);
+
+  useEffect(() => {
+    if (user?.id && hasAccess('direct_messages')) {
+      fetchUnreadDirectMessagesCount();
+    }
+  }, [user?.id, hasAccess, fetchUnreadDirectMessagesCount]);
+
+  const fetchOutOfOfficeStatuses = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('user_out_of_office')
+      .select('*')
+      .eq('is_enabled', true);
+
+    if (!error && data) {
+      const statusMap: Record<string, typeof data[0]> = {};
+      data.forEach(status => {
+        if (status.end_time) {
+          const endTime = new Date(status.end_time);
+          if (endTime > new Date()) {
+            statusMap[status.user_id] = status;
+          }
+        } else {
+          statusMap[status.user_id] = status;
+        }
+      });
+      setOutOfOfficeStatuses(statusMap);
+      if (user?.id && statusMap[user.id]) {
+        setMyOOOStatus(statusMap[user.id]);
+      }
+    }
+  }, [user?.id]);
+
+  const fetchAllUsers = useCallback(async () => {
+    const { data } = await supabase
+      .from('sales_people')
+      .select('user_id, name, role')
+      .eq('is_active', true)
+      .order('name');
+    if (data) {
+      setAllUsers(data.filter(u => u.user_id !== user?.id));
+    }
+  }, [user?.id]);
+
+  const fetchMyOOOStatus = useCallback(async () => {
+    if (!user?.id) return;
+    const { data } = await supabase
+      .from('user_out_of_office')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (data) {
+      setMyOOOStatus(data);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (user?.id && hasAccess('direct_messages')) {
+      fetchOutOfOfficeStatuses();
+      fetchAllUsers();
+      fetchMyOOOStatus();
+    }
+  }, [user?.id, hasAccess, fetchOutOfOfficeStatuses, fetchAllUsers, fetchMyOOOStatus]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (messagesDropdownRef.current && !messagesDropdownRef.current.contains(event.target as Node)) {
+        setShowMessagesDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const getOOOStatusInfo = (statusType: string) => {
+    const statusConfig: Record<string, { icon: typeof Clock; label: string; color: string }> = {
+      lunch: { icon: Coffee, label: 'At Lunch', color: 'bg-amber-100 text-amber-800' },
+      out_of_office: { icon: Briefcase, label: 'Out of Office', color: 'bg-blue-100 text-blue-800' },
+      meeting: { icon: Calendar, label: 'In a Meeting', color: 'bg-emerald-100 text-emerald-800' },
+      vacation: { icon: Palmtree, label: 'On Vacation', color: 'bg-teal-100 text-teal-800' },
+      custom: { icon: Clock, label: 'Away', color: 'bg-slate-100 text-slate-800' }
+    };
+    return statusConfig[statusType] || statusConfig.custom;
+  };
+
+  const oooUsers = allUsers.filter(u => outOfOfficeStatuses[u.user_id]);
+  const oooCount = oooUsers.length;
+
+  const roleColors: Record<string, string> = {
+    super_admin: 'from-purple-500 to-purple-600',
+    admin: 'from-amber-500 to-amber-600',
+    salesperson: 'from-blue-500 to-blue-600',
+    closer: 'from-emerald-500 to-emerald-600',
+    processor: 'from-teal-500 to-teal-600',
+    sales_processor: 'from-cyan-500 to-cyan-600'
+  };
 
   const getGreeting = () => {
     const hour = nowInEST().getHours();
@@ -120,6 +258,7 @@ export function Dashboard() {
     { id: 'processor-report' as Tab, label: 'Submit Performance Report', icon: ClipboardList, module: 'submit_performance_report', color: 'text-blue-700' },
     { id: 'meetings' as Tab, label: 'Meeting Logs', icon: Calendar, module: 'meeting_logs_report', color: 'text-orange-600' },
     { id: 'resources' as Tab, label: 'Resources', icon: FileText, module: 'resources', color: 'text-slate-600' },
+    { id: 'direct-messages' as Tab, label: 'Direct Messages', icon: MessageCircle, module: 'direct_messages', color: 'text-blue-600' },
   ];
 
   // Administrative tabs that will be in the dropdown
@@ -154,6 +293,15 @@ export function Dashboard() {
       return () => clearTimeout(timer);
     }
   }, [activeTab, fetchUnreadCommunicationsCount]);
+
+  useEffect(() => {
+    if (activeTab === 'direct-messages') {
+      const timer = setTimeout(() => {
+        fetchUnreadDirectMessagesCount();
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, fetchUnreadDirectMessagesCount]);
 
   const isCloser = salesPerson?.role === 'closer';
   const isSuperAdmin = salesPerson?.role === 'super_admin';
@@ -266,6 +414,126 @@ export function Dashboard() {
                 <div className="relative">
                   <Announcements onNavigateToAnnouncements={() => setActiveTab('announcements')} />
                 </div>
+                {hasAccess('direct_messages') && (
+                  <div className="relative" ref={messagesDropdownRef}>
+                    <button
+                      onClick={() => setShowMessagesDropdown(!showMessagesDropdown)}
+                      className={`relative flex items-center text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors ${
+                        isMobile ? 'gap-1 px-2 py-2' : 'gap-2 px-3 py-2'
+                      } ${myOOOStatus?.is_enabled ? 'ring-2 ring-amber-400 ring-offset-1' : ''}`}
+                    >
+                      <MessageCircle className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
+                      <span className={isMobile ? 'text-xs' : 'text-sm'}>Messages / Set Out of Office</span>
+                      <ChevronDown className={`w-4 h-4 transition-transform ${showMessagesDropdown ? 'rotate-180' : ''}`} />
+                      {(unreadDirectMessagesCount > 0 || oooCount > 0) && (
+                        <span className="absolute -top-2 -right-2 flex items-center gap-0.5">
+                          {unreadDirectMessagesCount > 0 && (
+                            <span className="flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-red-500 text-white text-xs font-bold rounded-full shadow-lg animate-pulse">
+                              {unreadDirectMessagesCount > 99 ? '99+' : unreadDirectMessagesCount}
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </button>
+                    {showMessagesDropdown && (
+                      <div className="absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+                        <div className="p-3 border-b border-slate-100 bg-gradient-to-r from-emerald-50 to-slate-50">
+                          <button
+                            onClick={() => {
+                              setActiveTab('direct-messages');
+                              setShowMessagesDropdown(false);
+                            }}
+                            className="w-full flex items-center justify-between p-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <MessageCircle className="w-5 h-5" />
+                              <span className="font-medium">Open Messages</span>
+                            </div>
+                            {unreadDirectMessagesCount > 0 && (
+                              <span className="px-2 py-0.5 bg-white/20 rounded-full text-sm font-bold">
+                                {unreadDirectMessagesCount} unread
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                        <div className="p-3 border-b border-slate-100">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-semibold text-slate-700">Your Status</span>
+                            {myOOOStatus?.is_enabled && (
+                              <span className={`px-2 py-0.5 text-xs font-medium rounded ${getOOOStatusInfo(myOOOStatus.status_type).color}`}>
+                                {getOOOStatusInfo(myOOOStatus.status_type).label}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => {
+                              setActiveTab('direct-messages');
+                              setShowMessagesDropdown(false);
+                            }}
+                            className={`w-full flex items-center gap-2 p-2.5 rounded-lg transition-colors text-left ${
+                              myOOOStatus?.is_enabled
+                                ? 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                                : 'bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200'
+                            }`}
+                          >
+                            <Clock className="w-4 h-4" />
+                            <span className="text-sm font-medium">
+                              {myOOOStatus?.is_enabled ? 'Manage Your Status' : 'Set Out of Office'}
+                            </span>
+                          </button>
+                        </div>
+                        {oooCount > 0 && (
+                          <div className="p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <AlertCircle className="w-4 h-4 text-amber-600" />
+                              <span className="text-sm font-semibold text-slate-700">Who's Away</span>
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">
+                                {oooCount}
+                              </span>
+                            </div>
+                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                              {oooUsers.map(u => {
+                                const status = outOfOfficeStatuses[u.user_id];
+                                const statusInfo = getOOOStatusInfo(status.status_type);
+                                const StatusIcon = statusInfo.icon;
+                                return (
+                                  <div
+                                    key={u.user_id}
+                                    className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg"
+                                  >
+                                    <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${roleColors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white text-sm font-bold flex-shrink-0`}>
+                                      {u.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-sm font-medium text-slate-900 truncate">{u.name}</span>
+                                        <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded flex items-center gap-0.5 ${statusInfo.color}`}>
+                                          <StatusIcon className="w-2.5 h-2.5" />
+                                          {statusInfo.label}
+                                        </span>
+                                      </div>
+                                      {status.end_time && (
+                                        <p className="text-[10px] text-slate-500">
+                                          Back: {new Date(status.end_time).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {oooCount === 0 && (
+                          <div className="p-4 text-center text-slate-500 text-sm">
+                            <Users className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                            Everyone is available
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {hasAccess('view_communications') && (
                   <button
                     onClick={() => setActiveTab('view-communications')}
@@ -428,6 +696,7 @@ export function Dashboard() {
         {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
         {activeTab === 'upload-resource' && hasAccess('upload_resource') && <UploadResource />}
+        {activeTab === 'direct-messages' && hasAccess('direct_messages') && <DirectMessages />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
       </main>

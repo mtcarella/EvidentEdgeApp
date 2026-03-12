@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { History, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { History, ChevronDown, ChevronUp, Plus, Pencil, Trash2, User, Building2, Phone, Mail, MapPin, FileText, Calendar as CalendarIcon, DollarSign, Users, Briefcase } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getESTToday, formatTimestampForDisplay } from '../lib/dateUtils';
 
@@ -13,6 +13,125 @@ interface AuditEntry {
   new_data: any;
   userName?: string;
 }
+
+const fieldLabels: Record<string, Record<string, string>> = {
+  contacts: {
+    id: 'Contact ID',
+    first_name: 'First Name',
+    last_name: 'Last Name',
+    company: 'Company',
+    title: 'Job Title',
+    email: 'Email Address',
+    phone: 'Phone Number',
+    cell_phone: 'Cell Phone',
+    address: 'Address',
+    notes: 'Notes',
+    processor_notes: 'Processor Notes',
+    branch: 'Branch',
+    status: 'Status',
+    contact_type: 'Contact Type',
+    vendor_type: 'Vendor Type',
+    paralegal: 'Paralegal',
+    evident_paralegal: 'Evident Paralegal',
+    paralegal_processor: 'Paralegal/Processor',
+    drinks: 'Drinks Alcohol',
+    created_at: 'Created Date',
+    updated_at: 'Last Updated',
+    assigned_to: 'Assigned To',
+    marketing_points: 'Marketing Points',
+    client_identifier_no: 'Client Identifier Number',
+  },
+  sales_people: {
+    id: 'User ID',
+    user_id: 'Auth User ID',
+    name: 'Full Name',
+    first_name: 'First Name',
+    last_name: 'Last Name',
+    email: 'Email Address',
+    phone: 'Phone Number',
+    cell_phone: 'Cell Phone',
+    role: 'Role',
+    branch: 'Branch',
+    is_active: 'Active Status',
+    birthday: 'Birthday',
+    created_at: 'Created Date',
+    updated_at: 'Last Updated',
+  },
+  assignments: {
+    id: 'Assignment ID',
+    contact_id: 'Contact',
+    salesperson_id: 'Assigned Salesperson',
+    assigned_at: 'Assignment Date',
+    created_at: 'Created Date',
+  },
+  meetings: {
+    id: 'Meeting ID',
+    contact_id: 'Contact',
+    salesperson_id: 'Salesperson',
+    meeting_date: 'Meeting Date',
+    meeting_type: 'Meeting Type',
+    location: 'Location',
+    notes: 'Notes',
+    expense_type: 'Expense Type',
+    expense_amount: 'Expense Amount',
+    expense_payment_method: 'Payment Method',
+    created_at: 'Created Date',
+  },
+  verified_wires: {
+    id: 'Wire ID',
+    loan_number: 'Loan Number',
+    client_name: 'Client Name',
+    phone: 'Phone',
+    wire_amount: 'Wire Amount',
+    verified_by: 'Verified By',
+    verification_date: 'Verification Date',
+    notes: 'Notes',
+  },
+};
+
+const roleLabels: Record<string, string> = {
+  admin: 'Administrator',
+  super_admin: 'Super Administrator',
+  salesperson: 'Salesperson',
+  processor: 'Processor',
+  sales_processor: 'Sales Processor',
+  closer: 'Closer',
+  user: 'User',
+};
+
+const statusLabels: Record<string, string> = {
+  active: 'Active',
+  inactive: 'Inactive',
+  pending: 'Pending',
+  lead: 'Lead',
+  prospect: 'Prospect',
+  client: 'Client',
+};
+
+const contactTypeLabels: Record<string, string> = {
+  attorney: 'Attorney',
+  realtor: 'Realtor',
+  lender: 'Lender',
+  vendor: 'Vendor',
+  other: 'Other',
+};
+
+const vendorTypeLabels: Record<string, string> = {
+  title_company: 'Title Company',
+  insurance: 'Insurance',
+  surveyor: 'Surveyor',
+  appraiser: 'Appraiser',
+  inspector: 'Home Inspector',
+  other: 'Other Vendor',
+};
+
+const branchLabels: Record<string, string> = {
+  new_york: 'New York',
+  new_jersey: 'New Jersey',
+  florida: 'Florida',
+  pennsylvania: 'Pennsylvania',
+  all: 'All Branches',
+};
 
 type DateRange = 'today' | 'yesterday' | 'last7' | 'last30' | 'last90' | 'custom' | 'all';
 
@@ -136,50 +255,223 @@ export function AuditLog() {
     const labels: Record<string, string> = {
       contacts: 'Contact',
       assignments: 'Assignment',
-      sales_people: 'Salesperson',
+      sales_people: 'User',
+      meetings: 'Meeting',
+      verified_wires: 'Wire Verification',
     };
     return labels[tableName] || tableName;
   };
 
+  const getActionLabel = (action: string) => {
+    switch (action) {
+      case 'INSERT': return 'Created';
+      case 'UPDATE': return 'Updated';
+      case 'DELETE': return 'Deleted';
+      default: return action;
+    }
+  };
+
+  const getActionIcon = (action: string) => {
+    switch (action) {
+      case 'INSERT': return <Plus className="w-3.5 h-3.5" />;
+      case 'UPDATE': return <Pencil className="w-3.5 h-3.5" />;
+      case 'DELETE': return <Trash2 className="w-3.5 h-3.5" />;
+      default: return null;
+    }
+  };
+
+  const getFieldLabel = (tableName: string, fieldName: string): string => {
+    return fieldLabels[tableName]?.[fieldName] || fieldName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
+
+  const formatValue = (tableName: string, fieldName: string, value: any): string => {
+    if (value === null || value === undefined) return 'Not set';
+    if (value === '') return 'Empty';
+    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+
+    if (fieldName === 'role' && roleLabels[value]) return roleLabels[value];
+    if (fieldName === 'status' && statusLabels[value]) return statusLabels[value];
+    if (fieldName === 'contact_type' && contactTypeLabels[value]) return contactTypeLabels[value];
+    if (fieldName === 'vendor_type' && vendorTypeLabels[value]) return vendorTypeLabels[value];
+    if (fieldName === 'branch' && branchLabels[value]) return branchLabels[value];
+    if (fieldName === 'is_active') return value ? 'Active' : 'Inactive';
+    if (fieldName === 'drinks') return value ? 'Yes' : 'No';
+
+    if (fieldName.includes('_at') || fieldName.includes('date') || fieldName === 'birthday') {
+      try {
+        const date = new Date(value);
+        if (!isNaN(date.getTime())) {
+          return date.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            ...(fieldName.includes('_at') ? { hour: 'numeric', minute: '2-digit' } : {})
+          });
+        }
+      } catch {
+        return String(value);
+      }
+    }
+
+    if (fieldName.includes('amount') || fieldName.includes('wire_amount')) {
+      const num = parseFloat(value);
+      if (!isNaN(num)) {
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
+      }
+    }
+
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
+  const getRecordIdentifier = (tableName: string, data: any): string => {
+    if (!data) return '';
+
+    switch (tableName) {
+      case 'contacts':
+        const name = [data.first_name, data.last_name].filter(Boolean).join(' ');
+        return name || data.company || 'Unknown Contact';
+      case 'sales_people':
+        return data.name || [data.first_name, data.last_name].filter(Boolean).join(' ') || data.email || 'Unknown User';
+      case 'assignments':
+        return 'Contact Assignment';
+      case 'meetings':
+        return data.meeting_type ? `${data.meeting_type} Meeting` : 'Meeting';
+      case 'verified_wires':
+        return data.client_name || `Loan #${data.loan_number}` || 'Wire';
+      default:
+        return '';
+    }
+  };
+
+  const getSummaryDescription = (entry: AuditEntry): string => {
+    const identifier = getRecordIdentifier(entry.table_name, entry.new_data || entry.old_data);
+    const tableLabel = getTableLabel(entry.table_name).toLowerCase();
+
+    switch (entry.action) {
+      case 'INSERT':
+        return `Created new ${tableLabel}${identifier ? `: ${identifier}` : ''}`;
+      case 'DELETE':
+        return `Deleted ${tableLabel}${identifier ? `: ${identifier}` : ''}`;
+      case 'UPDATE':
+        if (entry.old_data && entry.new_data) {
+          const changedFields: string[] = [];
+          Object.keys(entry.new_data).forEach(key => {
+            if (JSON.stringify(entry.old_data[key]) !== JSON.stringify(entry.new_data[key])) {
+              if (!['id', 'created_at', 'updated_at', 'user_id'].includes(key)) {
+                changedFields.push(getFieldLabel(entry.table_name, key));
+              }
+            }
+          });
+          if (changedFields.length === 0) return `Updated ${tableLabel}${identifier ? `: ${identifier}` : ''}`;
+          if (changedFields.length <= 2) {
+            return `Changed ${changedFields.join(' and ')} for ${identifier || tableLabel}`;
+          }
+          return `Made ${changedFields.length} changes to ${identifier || tableLabel}`;
+        }
+        return `Updated ${tableLabel}${identifier ? `: ${identifier}` : ''}`;
+      default:
+        return `${entry.action} on ${tableLabel}`;
+    }
+  };
+
   const renderDataDiff = (entry: AuditEntry) => {
+    const excludedFields = ['id', 'created_at', 'updated_at'];
+
     if (entry.action === 'INSERT' && entry.new_data) {
+      const relevantFields = Object.entries(entry.new_data).filter(
+        ([key, value]) => !excludedFields.includes(key) && value !== null && value !== ''
+      );
+
       return (
-        <div className="bg-green-50 p-3 rounded border border-green-200">
-          <p className="text-xs font-semibold text-green-900 mb-2">New Record</p>
-          <pre className="text-xs text-green-800 whitespace-pre-wrap">
-            {JSON.stringify(entry.new_data, null, 2)}
-          </pre>
+        <div className="bg-green-50 p-4 rounded-lg border border-green-200">
+          <div className="flex items-center gap-2 mb-3">
+            <Plus className="w-4 h-4 text-green-700" />
+            <p className="text-sm font-semibold text-green-800">New Record Created</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {relevantFields.map(([key, value]) => (
+              <div key={key} className="flex flex-col">
+                <span className="text-xs font-medium text-green-700">{getFieldLabel(entry.table_name, key)}</span>
+                <span className="text-sm text-green-900">{formatValue(entry.table_name, key, value)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
 
     if (entry.action === 'DELETE' && entry.old_data) {
+      const identifier = getRecordIdentifier(entry.table_name, entry.old_data);
+      const relevantFields = Object.entries(entry.old_data).filter(
+        ([key, value]) => !excludedFields.includes(key) && value !== null && value !== ''
+      );
+
       return (
-        <div className="bg-red-50 p-3 rounded border border-red-200">
-          <p className="text-xs font-semibold text-red-900 mb-2">Deleted Record</p>
-          <pre className="text-xs text-red-800 whitespace-pre-wrap">
-            {JSON.stringify(entry.old_data, null, 2)}
-          </pre>
+        <div className="bg-red-50 p-4 rounded-lg border border-red-200">
+          <div className="flex items-center gap-2 mb-3">
+            <Trash2 className="w-4 h-4 text-red-700" />
+            <p className="text-sm font-semibold text-red-800">
+              Record Deleted{identifier ? `: ${identifier}` : ''}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {relevantFields.map(([key, value]) => (
+              <div key={key} className="flex flex-col">
+                <span className="text-xs font-medium text-red-700">{getFieldLabel(entry.table_name, key)}</span>
+                <span className="text-sm text-red-900 line-through opacity-75">{formatValue(entry.table_name, key, value)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
 
     if (entry.action === 'UPDATE' && entry.old_data && entry.new_data) {
-      const changes: string[] = [];
+      const changes: Array<{ field: string; label: string; oldValue: any; newValue: any }> = [];
       Object.keys(entry.new_data).forEach(key => {
-        if (JSON.stringify(entry.old_data[key]) !== JSON.stringify(entry.new_data[key])) {
-          changes.push(`${key}: ${entry.old_data[key]} → ${entry.new_data[key]}`);
+        if (!excludedFields.includes(key) && JSON.stringify(entry.old_data[key]) !== JSON.stringify(entry.new_data[key])) {
+          changes.push({
+            field: key,
+            label: getFieldLabel(entry.table_name, key),
+            oldValue: entry.old_data[key],
+            newValue: entry.new_data[key],
+          });
         }
       });
 
+      if (changes.length === 0) {
+        return (
+          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <p className="text-sm text-slate-600">No visible changes detected</p>
+          </div>
+        );
+      }
+
       return (
-        <div className="bg-blue-50 p-3 rounded border border-blue-200">
-          <p className="text-xs font-semibold text-blue-900 mb-2">Changes Made</p>
-          <ul className="text-xs text-blue-800 space-y-1">
-            {changes.map((change, idx) => (
-              <li key={idx}>{change}</li>
+        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+          <div className="flex items-center gap-2 mb-3">
+            <Pencil className="w-4 h-4 text-blue-700" />
+            <p className="text-sm font-semibold text-blue-800">
+              {changes.length} {changes.length === 1 ? 'Change' : 'Changes'} Made
+            </p>
+          </div>
+          <div className="space-y-3">
+            {changes.map(({ field, label, oldValue, newValue }) => (
+              <div key={field} className="bg-white/50 rounded-lg p-3 border border-blue-100">
+                <div className="text-xs font-semibold text-blue-700 mb-2">{label}</div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-red-600 bg-red-50 px-2 py-1 rounded line-through">
+                    {formatValue(entry.table_name, field, oldValue)}
+                  </span>
+                  <span className="text-blue-500">to</span>
+                  <span className="text-green-700 bg-green-50 px-2 py-1 rounded font-medium">
+                    {formatValue(entry.table_name, field, newValue)}
+                  </span>
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
       );
     }
@@ -276,7 +568,7 @@ export function AuditLog() {
           <p>No audit entries yet</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {entries.map((entry) => (
             <div
               key={entry.id}
@@ -286,25 +578,39 @@ export function AuditLog() {
                 onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
                 className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
               >
-                <div className="flex items-center gap-3 text-left">
-                  <span className={`text-xs font-semibold px-2 py-1 rounded ${getActionColor(entry.action)}`}>
-                    {entry.action}
-                  </span>
-                  <span className="text-sm font-medium text-slate-900">
-                    {getTableLabel(entry.table_name)}
-                  </span>
-                  <span className="text-xs text-slate-500">by {entry.userName}</span>
-                  <span className="text-xs text-slate-400">{formatDate(entry.changed_at)}</span>
+                <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-left flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${getActionColor(entry.action)}`}>
+                      {getActionIcon(entry.action)}
+                      {getActionLabel(entry.action)}
+                    </span>
+                    <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                      {getTableLabel(entry.table_name)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 flex-1">
+                    {getSummaryDescription(entry)}
+                  </p>
+                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                    <span className="flex items-center gap-1">
+                      <User className="w-3.5 h-3.5" />
+                      {entry.userName}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <CalendarIcon className="w-3.5 h-3.5" />
+                      {formatDate(entry.changed_at)}
+                    </span>
+                  </div>
                 </div>
                 {expanded === entry.id ? (
-                  <ChevronUp className="w-5 h-5 text-slate-400" />
+                  <ChevronUp className="w-5 h-5 text-slate-400 ml-2" />
                 ) : (
-                  <ChevronDown className="w-5 h-5 text-slate-400" />
+                  <ChevronDown className="w-5 h-5 text-slate-400 ml-2" />
                 )}
               </button>
 
               {expanded === entry.id && (
-                <div className="p-4 border-t border-slate-200">
+                <div className="p-4 border-t border-slate-200 bg-white">
                   {renderDataDiff(entry)}
                 </div>
               )}

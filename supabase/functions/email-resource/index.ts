@@ -7,12 +7,18 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+interface AttachmentData {
+  filename: string;
+  content: string;
+}
+
 interface EmailResourceRequest {
   resourceId: string;
   recipientEmails: string[];
   subject: string;
   message: string;
   senderEmail?: string;
+  additionalAttachments?: AttachmentData[];
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -37,7 +43,7 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { resourceId, recipientEmails, subject, message, senderEmail }: EmailResourceRequest = await req.json();
+    const { resourceId, recipientEmails, subject, message, senderEmail, additionalAttachments }: EmailResourceRequest = await req.json();
 
     if (!resourceId || !recipientEmails || recipientEmails.length === 0 || !subject || !message) {
       return new Response(
@@ -133,7 +139,8 @@ Deno.serve(async (req: Request) => {
               {
                 filename: `${resource.title}.pdf`,
                 content: fileBase64,
-              }
+              },
+              ...(additionalAttachments || []),
             ],
           }),
         });

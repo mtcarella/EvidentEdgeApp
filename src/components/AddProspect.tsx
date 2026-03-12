@@ -584,10 +584,12 @@ export function AddProspect() {
               className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             >
               <option value="">None</option>
+              <option value="Danielle">Danielle</option>
+              <option value="Elizabeth">Elizabeth</option>
+              <option value="Jahaira">Jahaira</option>
               <option value="Kristen">Kristen</option>
               <option value="Lisa">Lisa</option>
               <option value="Raphael">Raphael</option>
-              <option value="Danielle">Danielle</option>
             </select>
           </div>
         )}

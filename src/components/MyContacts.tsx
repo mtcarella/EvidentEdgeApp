@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -74,6 +74,8 @@ export function MyContacts() {
   const [quickMeetingExpenseAmount, setQuickMeetingExpenseAmount] = useState('');
   const [quickMeetingReceiptFiles, setQuickMeetingReceiptFiles] = useState<File[]>([]);
   const [quickMeetingSaving, setQuickMeetingSaving] = useState(false);
+  const [quickMeetingAdditionalContacts, setQuickMeetingAdditionalContacts] = useState<Set<string>>(new Set());
+  const [showQuickMeetingAdditionalContacts, setShowQuickMeetingAdditionalContacts] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -251,11 +253,14 @@ export function MyContacts() {
     setQuickMeetingExpenseMethod('');
     setQuickMeetingExpenseAmount('');
     setQuickMeetingReceiptFiles([]);
+    setQuickMeetingAdditionalContacts(new Set());
+    setShowQuickMeetingAdditionalContacts(false);
   };
 
   const handleQuickMeetingSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!salesPerson?.id || !quickMeetingContactId || !quickMeetingNotes.trim() || quickMeetingHasExpense === null) return;
+    if (quickMeetingHasExpense && !quickMeetingExpenseMethod) return;
 
     setQuickMeetingSaving(true);
     try {
@@ -287,8 +292,11 @@ export function MyContacts() {
         }
       }
 
-      const meetingData = {
-        contact_id: quickMeetingContactId,
+      const contactsToLog = [quickMeetingContactId, ...Array.from(quickMeetingAdditionalContacts)];
+      const meetingGroupId = contactsToLog.length > 1 ? crypto.randomUUID() : null;
+
+      const meetingsToInsert = contactsToLog.map((cId, index) => ({
+        contact_id: cId,
         salesperson_id: salesPerson.id,
         meeting_date: quickMeetingDate,
         notes: quickMeetingNotes,
@@ -301,19 +309,21 @@ export function MyContacts() {
         expense_amount: quickMeetingHasExpense && quickMeetingExpenseAmount ? parseFloat(quickMeetingExpenseAmount) : null,
         receipt_url: quickMeetingHasExpense && uploadedReceipts.length > 0 ? uploadedReceipts[0].filePath : null,
         created_by: salesPerson.user_id,
-      };
+        meeting_group_id: meetingGroupId,
+        is_primary_for_expense: index === 0,
+      }));
 
-      const { data: insertedMeeting, error } = await supabase
+      const { data: insertedMeetings, error } = await supabase
         .from('meetings')
-        .insert(meetingData)
-        .select('id')
-        .single();
+        .insert(meetingsToInsert)
+        .select('id');
 
       if (error) throw error;
 
-      if (insertedMeeting && uploadedReceipts.length > 0 && quickMeetingHasExpense) {
+      if (insertedMeetings && uploadedReceipts.length > 0 && quickMeetingHasExpense) {
+        const primaryMeetingId = insertedMeetings[0].id;
         const receiptsToInsert = uploadedReceipts.map(receipt => ({
-          meeting_id: insertedMeeting.id,
+          meeting_id: primaryMeetingId,
           file_path: receipt.filePath,
           file_name: receipt.fileName,
           created_by: salesPerson.user_id,
@@ -1025,6 +1035,71 @@ export function MyContacts() {
                 />
               </div>
 
+              <div className="border-t border-slate-200 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickMeetingAdditionalContacts(!showQuickMeetingAdditionalContacts)}
+                  className="flex items-center justify-between w-full text-sm font-medium text-slate-700 hover:text-slate-900"
+                >
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    <span>Apply to Additional Contacts</span>
+                    {quickMeetingAdditionalContacts.size > 0 && (
+                      <span className="px-2 py-0.5 bg-amber-500 text-white rounded-full text-xs font-semibold">
+                        {quickMeetingAdditionalContacts.size} selected
+                      </span>
+                    )}
+                  </div>
+                  {showQuickMeetingAdditionalContacts ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                </button>
+                {showQuickMeetingAdditionalContacts && (
+                  <div className="mt-3 bg-slate-50 border border-slate-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                    {contacts.filter(c => c.id !== quickMeetingContactId).length === 0 ? (
+                      <p className="text-sm text-slate-500 text-center py-2">No other contacts available</p>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-xs text-slate-600 mb-2">Select contacts to apply this same meeting log to:</p>
+                        {contacts
+                          .filter(c => c.id !== quickMeetingContactId)
+                          .map(c => (
+                            <div
+                              key={c.id}
+                              onClick={() => {
+                                const newSet = new Set(quickMeetingAdditionalContacts);
+                                if (newSet.has(c.id)) {
+                                  newSet.delete(c.id);
+                                } else {
+                                  newSet.add(c.id);
+                                }
+                                setQuickMeetingAdditionalContacts(newSet);
+                              }}
+                              className="flex items-center gap-2 p-2 hover:bg-white rounded cursor-pointer transition-colors"
+                            >
+                              <div className="flex-shrink-0">
+                                {quickMeetingAdditionalContacts.has(c.id) ? (
+                                  <CheckSquare className="w-5 h-5 text-amber-600" />
+                                ) : (
+                                  <Square className="w-5 h-5 text-slate-400" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm text-slate-900 font-medium">{c.name}</span>
+                                <span className="text-xs text-slate-500 ml-2 capitalize">
+                                  ({typeLabels[c.type as keyof typeof typeLabels]})
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Expense?</label>
                 <div className="flex gap-4">
@@ -1056,13 +1131,18 @@ export function MyContacts() {
               </div>
 
               {quickMeetingHasExpense && (
-                <div className="space-y-4 p-4 bg-slate-50 rounded-lg">
+                <div className={`space-y-4 p-4 rounded-lg ${!quickMeetingExpenseMethod ? 'bg-red-50 border-2 border-red-300' : 'bg-slate-50'}`}>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Payment Method <span className="text-red-500">*</span>
+                    </label>
+                    {!quickMeetingExpenseMethod && (
+                      <p className="text-xs text-red-500 mb-1">Please select a payment method</p>
+                    )}
                     <select
                       value={quickMeetingExpenseMethod}
                       onChange={(e) => setQuickMeetingExpenseMethod(e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                      className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${!quickMeetingExpenseMethod ? 'border-red-400' : 'border-slate-300'}`}
                     >
                       <option value="">Select method...</option>
                       <option value="Corporate Card">Corporate Card</option>
@@ -1142,7 +1222,7 @@ export function MyContacts() {
                 </button>
                 <button
                   type="submit"
-                  disabled={quickMeetingSaving || !quickMeetingNotes.trim() || quickMeetingHasExpense === null}
+                  disabled={quickMeetingSaving || !quickMeetingNotes.trim() || quickMeetingHasExpense === null || (quickMeetingHasExpense && !quickMeetingExpenseMethod)}
                   className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
                 >
                   {quickMeetingSaving ? (
@@ -1153,7 +1233,9 @@ export function MyContacts() {
                   ) : (
                     <>
                       <Calendar className="w-4 h-4" />
-                      Log Meeting
+                      {quickMeetingAdditionalContacts.size > 0
+                        ? `Log for ${quickMeetingAdditionalContacts.size + 1} Contacts`
+                        : 'Log Meeting'}
                     </>
                   )}
                 </button>

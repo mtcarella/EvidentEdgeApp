@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -97,6 +97,7 @@ export function Resources() {
   const [categoryActionLoading, setCategoryActionLoading] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [resourceSearchTerm, setResourceSearchTerm] = useState('');
+  const [emailAttachments, setEmailAttachments] = useState<File[]>([]);
 
   useEffect(() => {
     fetchCategories();
@@ -380,6 +381,7 @@ export function Resources() {
     setEmailRecipients([]);
     setManualEmail('');
     setUserSearchTerm('');
+    setEmailAttachments([]);
   };
 
   const handleEmailCancel = () => {
@@ -390,6 +392,32 @@ export function Resources() {
     setManualEmail('');
     setUserSearchTerm('');
     setContactSearchTerm('');
+    setEmailAttachments([]);
+  };
+
+  const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files);
+      setEmailAttachments(prev => [...prev, ...newFiles]);
+    }
+    e.target.value = '';
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setEmailAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
   };
 
   const handleAddManualEmail = () => {
@@ -459,6 +487,13 @@ export function Resources() {
     setEmailSending(true);
 
     try {
+      const additionalAttachments = await Promise.all(
+        emailAttachments.map(async (file) => ({
+          filename: file.name,
+          content: await fileToBase64(file),
+        }))
+      );
+
       const { data: senderData } = await supabase
         .from('sales_people')
         .select('email')
@@ -479,7 +514,8 @@ export function Resources() {
             recipientEmails: emailRecipients,
             subject: emailSubject,
             message: emailMessage,
-            senderEmail: senderData?.email
+            senderEmail: senderData?.email,
+            additionalAttachments: additionalAttachments.length > 0 ? additionalAttachments : undefined
           })
         }
       );
@@ -535,13 +571,14 @@ export function Resources() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'other' => {
+  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'word' | 'other' => {
     if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
       return 'link';
     }
     const ext = filePath.split('.').pop()?.toLowerCase();
     if (ext === 'pdf') return 'pdf';
     if (['mp4', 'webm', 'mov', 'avi', 'wmv'].includes(ext || '')) return 'video';
+    if (['doc', 'docx'].includes(ext || '')) return 'word';
     return 'other';
   };
 
@@ -620,46 +657,14 @@ export function Resources() {
       if (updateError) throw updateError;
 
       if (oldName !== newName) {
-        const affectedResources = resources.filter(r => r.category === oldName);
+        const { error: resourcesUpdateError } = await supabase
+          .from('resources')
+          .update({ category: newName })
+          .eq('category', oldName);
 
-        for (const resource of affectedResources) {
-          const oldFilePath = resource.file_path;
-          const fileName = oldFilePath.split('/').pop();
-          const newFilePath = `${newName}/${fileName}`;
-
-          const { data: fileData, error: downloadError } = await supabase.storage
-            .from('resources')
-            .download(oldFilePath);
-
-          if (downloadError) {
-            console.error(`Failed to download ${oldFilePath}:`, downloadError);
-            continue;
-          }
-
-          const { error: uploadError } = await supabase.storage
-            .from('resources')
-            .upload(newFilePath, fileData);
-
-          if (uploadError) {
-            console.error(`Failed to upload to ${newFilePath}:`, uploadError);
-            continue;
-          }
-
-          const { error: dbUpdateError } = await supabase
-            .from('resources')
-            .update({
-              category: newName,
-              file_path: newFilePath
-            })
-            .eq('id', resource.id);
-
-          if (dbUpdateError) {
-            console.error(`Failed to update resource ${resource.id}:`, dbUpdateError);
-            await supabase.storage.from('resources').remove([newFilePath]);
-            continue;
-          }
-
-          await supabase.storage.from('resources').remove([oldFilePath]);
+        if (resourcesUpdateError) {
+          console.error('Failed to update resources category:', resourcesUpdateError);
+          throw new Error('Failed to update resources with new category name');
         }
       }
 
@@ -826,6 +831,7 @@ export function Resources() {
                           const fileType = getFileType(resource.file_path);
                           const isVideo = fileType === 'video';
                           const isLink = fileType === 'link';
+                          const isWord = fileType === 'word';
                           return (
                           <div
                             key={resource.id}
@@ -833,12 +839,14 @@ export function Resources() {
                           >
                             <div className="flex items-center gap-3 flex-1 min-w-0">
                               <div className={`p-2 rounded-lg group-hover:bg-white group-hover:shadow-sm transition-all duration-150 ${
-                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : 'bg-gray-100'
+                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : isWord ? 'bg-sky-100' : 'bg-gray-100'
                               }`}>
                                 {isLink ? (
                                   <Link className="h-4 w-4 text-emerald-600" />
                                 ) : isVideo ? (
                                   <Video className="h-4 w-4 text-blue-600" />
+                                ) : isWord ? (
+                                  <FileType className="h-4 w-4 text-sky-600" />
                                 ) : (
                                   <FileText className="h-4 w-4 text-gray-500" />
                                 )}
@@ -867,6 +875,11 @@ export function Resources() {
                                       Video
                                     </span>
                                   )}
+                                  {isWord && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 rounded flex-shrink-0">
+                                      Word
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-xs text-gray-400 mt-0.5">
                                   {isLink ? (
@@ -888,6 +901,23 @@ export function Resources() {
                                 >
                                   <ExternalLink className="h-4 w-4" />
                                 </a>
+                              ) : isWord ? (
+                                <>
+                                  <button
+                                    onClick={() => handleDownload(resource)}
+                                    className="p-2 text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
+                                    title="Download to edit locally"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleEmailClick(resource)}
+                                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="Email Document"
+                                  >
+                                    <Mail className="h-4 w-4" />
+                                  </button>
+                                </>
                               ) : (
                                 <>
                                   <button
@@ -1323,6 +1353,53 @@ export function Resources() {
                   rows={5}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Additional Attachments
+                </label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleAttachmentChange}
+                    className="hidden"
+                    id="email-attachments"
+                  />
+                  <label
+                    htmlFor="email-attachments"
+                    className="flex flex-col items-center cursor-pointer"
+                  >
+                    <Plus className="h-8 w-8 text-gray-400 mb-2" />
+                    <span className="text-sm text-gray-600">Click to add files</span>
+                    <span className="text-xs text-gray-400 mt-1">PDF, Word, images, etc.</span>
+                  </label>
+                </div>
+                {emailAttachments.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {emailAttachments.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                          <span className="text-sm text-gray-700 truncate">{file.name}</span>
+                          <span className="text-xs text-gray-400 flex-shrink-0">
+                            ({(file.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveAttachment(index)}
+                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 

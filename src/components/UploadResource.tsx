@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Upload, Loader, AlertCircle, FileText, Video, Link } from 'lucide-react';
+import { Upload, Loader, AlertCircle, FileText, Video, Link, FileType } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
 
-type ResourceType = 'pdf' | 'video' | 'link';
+type ResourceType = 'pdf' | 'video' | 'link' | 'word';
 
 const ALLOWED_FILE_TYPES = {
   pdf: {
@@ -18,6 +18,12 @@ const ALLOWED_FILE_TYPES = {
     extensions: ['.mp4', '.webm', '.mov', '.avi', '.wmv'],
     label: 'Video',
     maxSize: 100 * 1024 * 1024,
+  },
+  word: {
+    mimeTypes: ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    extensions: ['.doc', '.docx'],
+    label: 'Word Document',
+    maxSize: 25 * 1024 * 1024,
   }
 };
 
@@ -238,7 +244,7 @@ export function UploadResource() {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Resource Type
             </label>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <button
                 type="button"
                 onClick={() => handleFileTypeChange('pdf')}
@@ -250,6 +256,18 @@ export function UploadResource() {
               >
                 <FileText className="h-5 w-5" />
                 <span className="font-medium">PDF</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleFileTypeChange('word')}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                  uploadForm.fileType === 'word'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                }`}
+              >
+                <FileType className="h-5 w-5" />
+                <span className="font-medium">Word</span>
               </button>
               <button
                 type="button"
@@ -297,11 +315,17 @@ export function UploadResource() {
           ) : (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {uploadForm.fileType === 'pdf' ? 'PDF File (Max 10MB)' : 'Video File (Max 100MB)'}
+                {uploadForm.fileType === 'pdf' ? 'PDF File (Max 10MB)' :
+                 uploadForm.fileType === 'word' ? 'Word Document (Max 25MB)' :
+                 'Video File (Max 100MB)'}
               </label>
               <input
                 type="file"
-                accept={uploadForm.fileType === 'pdf' ? '.pdf' : '.mp4,.webm,.mov,.avi,.wmv'}
+                accept={
+                  uploadForm.fileType === 'pdf' ? '.pdf' :
+                  uploadForm.fileType === 'word' ? '.doc,.docx' :
+                  '.mp4,.webm,.mov,.avi,.wmv'
+                }
                 onChange={handleFileChange}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
                 required
@@ -309,6 +333,11 @@ export function UploadResource() {
               {uploadForm.fileType === 'video' && (
                 <p className="text-xs text-gray-500 mt-1">
                   Supported formats: MP4, WebM, MOV, AVI, WMV
+                </p>
+              )}
+              {uploadForm.fileType === 'word' && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Supported formats: DOC, DOCX - Users can download and edit locally
                 </p>
               )}
             </div>

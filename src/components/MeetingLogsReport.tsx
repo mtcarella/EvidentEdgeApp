@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight } from 'lucide-react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx';
@@ -193,6 +193,7 @@ export function MeetingLogsReport() {
 
   const handleEditSave = async () => {
     if (!editingMeeting || !salesPerson) return;
+    if (editFormData.has_expense && !editFormData.expense_payment_method) return;
 
     try {
       let receiptUrl = editingMeeting.receipt_url || null;
@@ -415,6 +416,7 @@ export function MeetingLogsReport() {
       const zip = new JSZip();
       let successCount = 0;
       let failCount = 0;
+      const usedFilenames = new Map<string, number>();
 
       for (const meeting of meetingsWithReceipts) {
         const receiptsToDownload: { path: string; index: number }[] = [];
@@ -441,9 +443,15 @@ export function MeetingLogsReport() {
               const fileExtension = receipt.path.split('.').pop() || 'jpg';
               const meetingDate = new Date(meeting.meeting_date);
               const month = String(meetingDate.getMonth() + 1).padStart(2, '0');
+              const day = String(meetingDate.getDate()).padStart(2, '0');
               const year = meetingDate.getFullYear();
-              const receiptSuffix = receiptsToDownload.length > 1 ? `_${receipt.index}` : '';
-              const fileName = `${month}-${year}_${meeting.salesperson.name.replace(/\s+/g, '_')}_${meeting.contact.name.replace(/\s+/g, '_')}${receiptSuffix}.${fileExtension}`;
+              const receiptSuffix = receiptsToDownload.length > 1 ? `_receipt${receipt.index}` : '';
+              const baseFileName = `${month}-${day}-${year}_${meeting.salesperson.name.replace(/\s+/g, '_')}_${meeting.contact.name.replace(/\s+/g, '_')}${receiptSuffix}`;
+
+              const count = usedFilenames.get(baseFileName) || 0;
+              usedFilenames.set(baseFileName, count + 1);
+              const uniqueSuffix = count > 0 ? `_${count + 1}` : '';
+              const fileName = `${baseFileName}${uniqueSuffix}.${fileExtension}`;
 
               zip.file(fileName, fileData);
               successCount++;
@@ -964,8 +972,13 @@ export function MeetingLogsReport() {
                   <span className="text-base font-bold text-slate-800">This meeting had an expense</span>
                 </label>
                 {editFormData.has_expense && (
-                  <div className="mt-3 p-4 bg-white border-2 border-yellow-300 rounded-lg">
-                    <p className="text-sm font-semibold text-slate-700 mb-3">Payment Method:</p>
+                  <div className={`mt-3 p-4 bg-white border-2 rounded-lg ${!editFormData.expense_payment_method ? 'border-red-400' : 'border-yellow-300'}`}>
+                    <p className="text-sm font-semibold text-slate-700 mb-3">
+                      Payment Method: <span className="text-red-500">*</span>
+                    </p>
+                    {!editFormData.expense_payment_method && (
+                      <p className="text-xs text-red-500 mb-2">Please select a payment method</p>
+                    )}
                     <div className="flex gap-3">
                       <label className="flex items-center gap-2 cursor-pointer">
                         <input
@@ -1065,7 +1078,8 @@ export function MeetingLogsReport() {
               </button>
               <button
                 onClick={handleEditSave}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                disabled={editFormData.has_expense && !editFormData.expense_payment_method}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Save Changes
               </button>

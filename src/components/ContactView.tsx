@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, User, Mail, Phone, Building2, MapPin, FileText, Calendar, Plus, Edit2, Trash2, Save, Shield, Cake, Wine, Tag, Star, TrendingUp, Users, CheckSquare, Square, Upload, Download, DollarSign, Image } from 'lucide-react';
+import { X, User, Mail, Phone, Building2, MapPin, FileText, Calendar, Plus, CreditCard as Edit2, Trash2, Save, Shield, Cake, Wine, Tag, Star, TrendingUp, Users, CheckSquare, Square, Upload, Download, DollarSign, Image } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateShort, formatDateWithWeekday, getTodayDateString } from '../lib/dateUtils';
@@ -173,6 +173,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
   const handleAddMeeting = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!salesPerson?.id || !meetingNotes.trim() || hasExpense === null) return;
+    if (hasExpense && !expensePaymentMethod) return;
 
     setSavingMeeting(true);
     try {
@@ -843,8 +844,13 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                       </div>
                     </div>
                     {hasExpense === true && (
-                      <div className="mt-3 p-4 bg-white border-2 border-yellow-300 rounded-lg">
-                        <p className="text-sm font-semibold text-slate-700 mb-3">Payment Method:</p>
+                      <div className={`mt-3 p-4 bg-white border-2 rounded-lg ${!expensePaymentMethod ? 'border-red-400' : 'border-yellow-300'}`}>
+                        <p className="text-sm font-semibold text-slate-700 mb-3">
+                          Payment Method: <span className="text-red-500">*</span>
+                        </p>
+                        {!expensePaymentMethod && (
+                          <p className="text-xs text-red-500 mb-2">Please select a payment method</p>
+                        )}
                         <div className="flex gap-3">
                           <label className="flex items-center gap-2 cursor-pointer">
                             <input
@@ -930,7 +936,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                   <div className="flex gap-2">
                     <button
                       type="submit"
-                      disabled={savingMeeting}
+                      disabled={savingMeeting || (hasExpense === true && !expensePaymentMethod)}
                       className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
                     >
                       {savingMeeting ? 'Saving...' : (additionalContacts.size > 0 ? `Save for ${additionalContacts.size + 1} Contact${additionalContacts.size + 1 !== 1 ? 's' : ''}` : 'Save Meeting')}
@@ -1075,8 +1081,13 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                             </div>
                           </div>
                           {editMeetingForm.has_expense === true && (
-                            <div className="mt-3 p-4 bg-white border-2 border-yellow-300 rounded-lg">
-                              <p className="text-sm font-semibold text-slate-700 mb-3">Payment Method:</p>
+                            <div className={`mt-3 p-4 bg-white border-2 rounded-lg ${!editMeetingForm.expense_payment_method ? 'border-red-400' : 'border-yellow-300'}`}>
+                              <p className="text-sm font-semibold text-slate-700 mb-3">
+                                Payment Method: <span className="text-red-500">*</span>
+                              </p>
+                              {!editMeetingForm.expense_payment_method && (
+                                <p className="text-xs text-red-500 mb-2">Please select a payment method</p>
+                              )}
                               <div className="flex gap-3">
                                 <label className="flex items-center gap-2 cursor-pointer">
                                   <input
@@ -1168,7 +1179,8 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleSaveMeeting(meeting.id)}
-                            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center gap-1"
+                            disabled={editMeetingForm.has_expense && !editMeetingForm.expense_payment_method}
+                            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Save className="w-4 h-4" />
                             Save
