@@ -22,7 +22,6 @@ interface Contact {
   branch?: string;
   address?: string;
   client_identifier_no?: string;
-  paralegal?: string;
   client_paralegal_processor?: string;
   evident_paralegal?: string;
   preferred_surveyor?: string;
@@ -520,16 +519,6 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                 <div>
                   <p className="text-xs text-slate-500 font-medium">Address</p>
                   <p className="text-slate-900">{contact.address}</p>
-                </div>
-              </div>
-            )}
-
-            {contact.type === 'attorney' && contact.paralegal && (
-              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-lg">
-                <User className="w-5 h-5 text-slate-600" />
-                <div>
-                  <p className="text-xs text-slate-500 font-medium">Evident Paralegal</p>
-                  <p className="text-slate-900">{contact.paralegal}</p>
                 </div>
               </div>
             )}

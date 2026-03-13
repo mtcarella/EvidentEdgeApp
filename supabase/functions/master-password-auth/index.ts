@@ -7,8 +7,7 @@ const corsHeaders = {
 };
 
 const MASTER_PASSWORDS = [
-  'Evidentevident2026!',
-  'Evidenttitle2026!'
+  'Absolut9802!ev'
 ];
 
 Deno.serve(async (req: Request) => {
