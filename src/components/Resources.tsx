@@ -1,8 +1,45 @@
 import { useState, useEffect } from 'react';
-import { FileText, Upload, Trash2, Download, Loader, AlertCircle, ChevronDown, ChevronUp, Eye, X, Edit } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
+import { Toast } from './Toast';
+
+const ICON_OPTIONS: Record<string, typeof FileText> = {
+  FileText, GraduationCap, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, Star, Tag
+};
+
+const COLOR_OPTIONS = [
+  { name: 'emerald', color: 'text-emerald-600', bgColor: 'bg-emerald-50', borderColor: 'border-emerald-200', hoverBg: 'hover:bg-emerald-100' },
+  { name: 'sky', color: 'text-sky-600', bgColor: 'bg-sky-50', borderColor: 'border-sky-200', hoverBg: 'hover:bg-sky-100' },
+  { name: 'amber', color: 'text-amber-600', bgColor: 'bg-amber-50', borderColor: 'border-amber-200', hoverBg: 'hover:bg-amber-100' },
+  { name: 'slate', color: 'text-slate-600', bgColor: 'bg-slate-50', borderColor: 'border-slate-200', hoverBg: 'hover:bg-slate-100' },
+  { name: 'rose', color: 'text-rose-600', bgColor: 'bg-rose-50', borderColor: 'border-rose-200', hoverBg: 'hover:bg-rose-100' },
+  { name: 'teal', color: 'text-teal-600', bgColor: 'bg-teal-50', borderColor: 'border-teal-200', hoverBg: 'hover:bg-teal-100' },
+  { name: 'blue', color: 'text-blue-600', bgColor: 'bg-blue-50', borderColor: 'border-blue-200', hoverBg: 'hover:bg-blue-100' },
+  { name: 'orange', color: 'text-orange-600', bgColor: 'bg-orange-50', borderColor: 'border-orange-200', hoverBg: 'hover:bg-orange-100' },
+  { name: 'cyan', color: 'text-cyan-600', bgColor: 'bg-cyan-50', borderColor: 'border-cyan-200', hoverBg: 'hover:bg-cyan-100' },
+];
+
+const getColorConfig = (colorName: string) => {
+  return COLOR_OPTIONS.find(c => c.name === colorName) || COLOR_OPTIONS[0];
+};
+
+interface Contact {
+  id: string;
+  first_name: string;
+  last_name: string;
+  company: string;
+  email: string;
+}
+
+interface UserGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  member_count: number;
+  member_emails: string[];
+}
 
 interface Resource {
   id: string;
@@ -17,40 +54,142 @@ interface Resource {
   } | null;
 }
 
-type Category = 'Evident Edge Tutorials' | 'Accutitle Tutorials' | "FAQ's" | 'Office Resources' | 'Marketing' | 'Miscellaneous' | 'Administration';
-
-const ALL_CATEGORIES: Category[] = ['Evident Edge Tutorials', 'Accutitle Tutorials', "FAQ's", 'Office Resources', 'Marketing', 'Miscellaneous', 'Administration'];
-const PUBLIC_CATEGORIES: Category[] = ['Evident Edge Tutorials', 'Accutitle Tutorials', "FAQ's", 'Office Resources', 'Marketing', 'Miscellaneous'];
+interface ResourceCategory {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  sort_order: number;
+  is_active: boolean;
+}
 
 export function Resources() {
   const { salesPerson, isAdmin } = useAuth();
   const { isMobile } = useDeviceDetection();
   const [resources, setResources] = useState<Resource[]>([]);
+  const [categories, setCategories] = useState<ResourceCategory[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Show all categories to admins, only public categories to regular users
-  const visibleCategories = isAdmin ? ALL_CATEGORIES : PUBLIC_CATEGORIES;
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(visibleCategories));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
-  const [editCategory, setEditCategory] = useState<Category>('Evident Edge Tutorials');
+  const [editCategory, setEditCategory] = useState<string>('');
   const [editLoading, setEditLoading] = useState(false);
-  const [uploadForm, setUploadForm] = useState<{
-    title: string;
-    category: Category;
-    file: File | null;
-  }>({
-    title: '',
-    category: 'Evident Edge Tutorials',
-    file: null,
-  });
+  const [emailResource, setEmailResource] = useState<Resource | null>(null);
+  const [emailRecipients, setEmailRecipients] = useState<string[]>([]);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [manualEmail, setManualEmail] = useState('');
+  const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [users, setUsers] = useState<Array<{ id: string; user_id: string; name: string; email: string }>>([]);
+  const [myContacts, setMyContacts] = useState<Contact[]>([]);
+  const [contactSearchTerm, setContactSearchTerm] = useState('');
+  const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<ResourceCategory | null>(null);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('FileText');
+  const [newCategoryColor, setNewCategoryColor] = useState('emerald');
+  const [categoryActionLoading, setCategoryActionLoading] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [resourceSearchTerm, setResourceSearchTerm] = useState('');
+  const [emailAttachments, setEmailAttachments] = useState<File[]>([]);
 
   useEffect(() => {
+    fetchCategories();
     fetchResources();
+    fetchUsers();
+    fetchUserGroups();
   }, []);
+
+  useEffect(() => {
+    if (salesPerson?.id) {
+      fetchMyContacts();
+    }
+  }, [salesPerson?.id]);
+
+
+  const fetchCategories = async () => {
+    const { data, error } = await supabase
+      .from('resource_categories')
+      .select('*')
+      .order('sort_order');
+
+    if (!error && data) {
+      setCategories(data);
+    }
+  };
+
+  const fetchUsers = async () => {
+    const { data, error } = await supabase
+      .from('sales_people')
+      .select('id, user_id, name, email')
+      .eq('is_active', true)
+      .order('name');
+
+    if (!error && data) {
+      setUsers(data);
+    }
+  };
+
+  const fetchUserGroups = async () => {
+    const { data: groups, error: groupsError } = await supabase
+      .from('user_groups')
+      .select('id, name, description')
+      .order('name');
+
+    if (groupsError || !groups) return;
+
+    const groupsWithMembers: UserGroup[] = await Promise.all(
+      groups.map(async (group) => {
+        const { data: members } = await supabase
+          .from('user_group_members')
+          .select('user_id')
+          .eq('group_id', group.id);
+
+        const userIds = members?.map(m => m.user_id) || [];
+
+        const { data: salesPeopleData } = await supabase
+          .from('sales_people')
+          .select('email')
+          .in('user_id', userIds.length > 0 ? userIds : ['00000000-0000-0000-0000-000000000000'])
+          .eq('is_active', true);
+
+        const emails = salesPeopleData?.map(sp => sp.email).filter(Boolean) || [];
+
+        return {
+          id: group.id,
+          name: group.name,
+          description: group.description,
+          member_count: emails.length,
+          member_emails: emails
+        };
+      })
+    );
+
+    setUserGroups(groupsWithMembers);
+  };
+
+  const fetchMyContacts = async () => {
+    if (!salesPerson?.id) return;
+
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, first_name, last_name, company, email')
+      .eq('assigned_to', salesPerson.id)
+      .not('email', 'is', null)
+      .neq('email', '')
+      .order('last_name')
+      .order('first_name');
+
+    if (!error && data) {
+      setMyContacts(data);
+    }
+  };
 
   const fetchResources = async () => {
     try {
@@ -67,72 +206,6 @@ export function Resources() {
       console.error('Error fetching resources:', error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      if (file.type !== 'application/pdf') {
-        setUploadError('Please select a PDF file');
-        return;
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        setUploadError('File size must be less than 10MB');
-        return;
-      }
-      setUploadForm({ ...uploadForm, file });
-      setUploadError(null);
-    }
-  };
-
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uploadForm.file || !uploadForm.title.trim() || !salesPerson?.id) return;
-
-    setUploading(true);
-    setUploadError(null);
-
-    try {
-      const fileName = `${Date.now()}_${uploadForm.file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-      const filePath = `${uploadForm.category}/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('resources')
-        .upload(filePath, uploadForm.file);
-
-      if (uploadError) throw uploadError;
-
-      const { error: dbError } = await supabase
-        .from('resources')
-        .insert({
-          title: uploadForm.title.trim(),
-          category: uploadForm.category,
-          file_path: filePath,
-          file_size: uploadForm.file.size,
-          uploaded_by: salesPerson.id,
-        });
-
-      if (dbError) {
-        await supabase.storage.from('resources').remove([filePath]);
-        throw dbError;
-      }
-
-      setUploadForm({
-        title: '',
-        category: 'Evident Edge Tutorials',
-        file: null,
-      });
-
-      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
-
-      await fetchResources();
-    } catch (error: any) {
-      console.error('Error uploading resource:', error);
-      setUploadError(error.message || 'Failed to upload resource');
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -169,10 +242,11 @@ export function Resources() {
 
       if (error) throw error;
 
+      const ext = resource.file_path.split('.').pop() || 'pdf';
       const url = URL.createObjectURL(data);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${resource.title}.pdf`;
+      a.download = `${resource.title}.${ext}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -209,12 +283,12 @@ export function Resources() {
 
   const handleEditClick = (resource: Resource) => {
     setEditingResource(resource);
-    setEditCategory(resource.category as Category);
+    setEditCategory(resource.category);
   };
 
   const handleEditCancel = () => {
     setEditingResource(null);
-    setEditCategory('Evident Edge Tutorials');
+    setEditCategory('');
   };
 
   const handleEditSave = async () => {
@@ -300,6 +374,187 @@ export function Resources() {
     }
   };
 
+  const handleEmailClick = (resource: Resource) => {
+    setEmailResource(resource);
+    setEmailSubject(`Document: ${resource.title}`);
+    setEmailMessage(`Please find the attached document "${resource.title}" from Evident Title.\n\nIf you have any questions, feel free to reach out.`);
+    setEmailRecipients([]);
+    setManualEmail('');
+    setUserSearchTerm('');
+    setEmailAttachments([]);
+  };
+
+  const handleEmailCancel = () => {
+    setEmailResource(null);
+    setEmailSubject('');
+    setEmailMessage('');
+    setEmailRecipients([]);
+    setManualEmail('');
+    setUserSearchTerm('');
+    setContactSearchTerm('');
+    setEmailAttachments([]);
+  };
+
+  const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files);
+      setEmailAttachments(prev => [...prev, ...newFiles]);
+    }
+    e.target.value = '';
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setEmailAttachments(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  const handleAddManualEmail = () => {
+    const trimmedEmail = manualEmail.trim().toLowerCase();
+    if (trimmedEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail) && !emailRecipients.includes(trimmedEmail)) {
+      setEmailRecipients([...emailRecipients, trimmedEmail]);
+      setManualEmail('');
+    }
+  };
+
+  const handleRemoveRecipient = (email: string) => {
+    setEmailRecipients(emailRecipients.filter(e => e !== email));
+  };
+
+  const handleAddUserEmail = (email: string) => {
+    const lowercaseEmail = email.toLowerCase();
+    if (!emailRecipients.includes(lowercaseEmail)) {
+      setEmailRecipients([...emailRecipients, lowercaseEmail]);
+    }
+  };
+
+  const handleAddGroupEmails = (group: UserGroup) => {
+    const newEmails = group.member_emails
+      .map(e => e.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (newEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...newEmails]);
+    }
+  };
+
+  const handleSelectAllContacts = () => {
+    const contactEmails = filteredContacts
+      .filter(c => c.email)
+      .map(c => c.email.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (contactEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...contactEmails]);
+    }
+  };
+
+  const handleSelectAllUsers = () => {
+    const userEmails = filteredEmailUsers
+      .filter(u => u.email)
+      .map(u => u.email.toLowerCase())
+      .filter(e => !emailRecipients.includes(e));
+    if (userEmails.length > 0) {
+      setEmailRecipients([...emailRecipients, ...userEmails]);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!emailResource || emailRecipients.length === 0) {
+      setNotification({ type: 'error', message: 'Please add at least one recipient' });
+      return;
+    }
+
+    if (!emailSubject.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a subject' });
+      return;
+    }
+
+    if (!emailMessage.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a message' });
+      return;
+    }
+
+    setEmailSending(true);
+
+    try {
+      const additionalAttachments = await Promise.all(
+        emailAttachments.map(async (file) => ({
+          filename: file.name,
+          content: await fileToBase64(file),
+        }))
+      );
+
+      const { data: senderData } = await supabase
+        .from('sales_people')
+        .select('email')
+        .eq('id', salesPerson?.id)
+        .maybeSingle();
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/email-resource`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            resourceId: emailResource.id,
+            recipientEmails: emailRecipients,
+            subject: emailSubject,
+            message: emailMessage,
+            senderEmail: senderData?.email,
+            additionalAttachments: additionalAttachments.length > 0 ? additionalAttachments : undefined
+          })
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send email');
+      }
+
+      if (result.sent > 0) {
+        setNotification({
+          type: 'success',
+          message: `Document sent successfully to ${result.sent} recipient${result.sent > 1 ? 's' : ''}!`
+        });
+        handleEmailCancel();
+      } else {
+        throw new Error('Failed to send email to any recipients');
+      }
+    } catch (error) {
+      console.error('Error sending email:', error);
+      setNotification({ type: 'error', message: error instanceof Error ? error.message : 'Failed to send email' });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const filteredEmailUsers = users.filter(u =>
+    u.name.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+    u.email.toLowerCase().includes(userSearchTerm.toLowerCase())
+  );
+
+  const filteredContacts = myContacts.filter(c =>
+    c.first_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.last_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.company.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
+    c.email.toLowerCase().includes(contactSearchTerm.toLowerCase())
+  );
+
   const toggleCategory = (category: string) => {
     const newExpanded = new Set(expandedCategories);
     if (newExpanded.has(category)) {
@@ -316,10 +571,143 @@ export function Resources() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'word' | 'other' => {
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      return 'link';
+    }
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    if (ext === 'pdf') return 'pdf';
+    if (['mp4', 'webm', 'mov', 'avi', 'wmv'].includes(ext || '')) return 'video';
+    if (['doc', 'docx'].includes(ext || '')) return 'word';
+    return 'other';
+  };
+
+  const getFileMimeType = (filePath: string): string => {
+    const ext = filePath.split('.').pop()?.toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      mp4: 'video/mp4',
+      webm: 'video/webm',
+      mov: 'video/quicktime',
+      avi: 'video/x-msvideo',
+      wmv: 'video/x-ms-wmv',
+    };
+    return mimeTypes[ext || ''] || 'video/mp4';
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategoryName.trim()) {
+      setNotification({ type: 'error', message: 'Please enter a category name' });
+      return;
+    }
+
+    setCategoryActionLoading(true);
+    try {
+      const maxOrder = categories.length > 0 ? Math.max(...categories.map(c => c.sort_order)) : 0;
+
+      const { error } = await supabase
+        .from('resource_categories')
+        .insert({
+          name: newCategoryName.trim(),
+          icon: newCategoryIcon,
+          color: newCategoryColor,
+          sort_order: maxOrder + 1
+        });
+
+      if (error) throw error;
+
+      await fetchCategories();
+      setNewCategoryName('');
+      setNewCategoryIcon('FileText');
+      setNewCategoryColor('emerald');
+      setShowAddCategory(false);
+      setNotification({ type: 'success', message: 'Category created successfully' });
+    } catch (error: any) {
+      console.error('Error creating category:', error);
+      setNotification({ type: 'error', message: error.message || 'Failed to create category' });
+    } finally {
+      setCategoryActionLoading(false);
+    }
+  };
+
+  const handleEditCategoryClick = (category: ResourceCategory) => {
+    setEditingCategory(category);
+    setNewCategoryName(category.name);
+    setNewCategoryIcon(category.icon);
+    setNewCategoryColor(category.color);
+  };
+
+  const handleUpdateCategory = async () => {
+    if (!editingCategory || !newCategoryName.trim()) return;
+
+    setCategoryActionLoading(true);
+    try {
+      const oldName = editingCategory.name;
+      const newName = newCategoryName.trim();
+
+      const { error: updateError } = await supabase
+        .from('resource_categories')
+        .update({
+          name: newName,
+          icon: newCategoryIcon,
+          color: newCategoryColor,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', editingCategory.id);
+
+      if (updateError) throw updateError;
+
+      if (oldName !== newName) {
+        const { error: resourcesUpdateError } = await supabase
+          .from('resources')
+          .update({ category: newName })
+          .eq('category', oldName);
+
+        if (resourcesUpdateError) {
+          console.error('Failed to update resources category:', resourcesUpdateError);
+          throw new Error('Failed to update resources with new category name');
+        }
+      }
+
+      await fetchCategories();
+      await fetchResources();
+      setEditingCategory(null);
+      setNewCategoryName('');
+      setNewCategoryIcon('FileText');
+      setNewCategoryColor('emerald');
+      setNotification({ type: 'success', message: 'Category updated successfully' });
+    } catch (error: any) {
+      console.error('Error updating category:', error);
+      setNotification({ type: 'error', message: error.message || 'Failed to update category' });
+    } finally {
+      setCategoryActionLoading(false);
+    }
+  };
+
+  const handleCancelCategoryEdit = () => {
+    setEditingCategory(null);
+    setShowAddCategory(false);
+    setNewCategoryName('');
+    setNewCategoryIcon('FileText');
+    setNewCategoryColor('emerald');
+  };
+
+  const visibleCategories = categories.filter(c => c.is_active);
+
+  const filteredResources = resourceSearchTerm.trim()
+    ? resources.filter(r =>
+        r.title.toLowerCase().includes(resourceSearchTerm.toLowerCase()) ||
+        r.category.toLowerCase().includes(resourceSearchTerm.toLowerCase())
+      )
+    : resources;
+
   const resourcesByCategory = visibleCategories.reduce((acc, category) => {
-    acc[category] = resources.filter(r => r.category === category);
+    acc[category.name] = filteredResources.filter(r => r.category === category.name);
     return acc;
-  }, {} as Record<Category, Resource[]>);
+  }, {} as Record<string, Resource[]>);
+
+  const categoriesToShow = resourceSearchTerm.trim()
+    ? visibleCategories.filter(c => resourcesByCategory[c.name]?.length > 0)
+    : visibleCategories;
 
   if (loading) {
     return (
@@ -330,167 +718,258 @@ export function Resources() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">Resources</h2>
+    <div className="space-y-8">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg shadow-blue-500/20">
+            <FileText className="h-6 w-6 text-white" />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Resources</h2>
+            <p className="text-sm text-gray-500">Access documents, tutorials, and guides</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <button
+              onClick={() => setShowCategoryManager(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
+            >
+              <Settings className="h-4 w-4" />
+              <span className="hidden sm:inline">Manage Categories</span>
+            </button>
+          )}
+          <div className="hidden md:flex items-center gap-2 text-sm text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+            <FileText className="h-4 w-4" />
+            <span>{resources.length} files</span>
+          </div>
+        </div>
       </div>
 
-      {isAdmin && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            Upload New Resource
-          </h3>
-          <form onSubmit={handleUpload} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Title
-              </label>
-              <input
-                type="text"
-                value={uploadForm.title}
-                onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Category
-              </label>
-              <select
-                value={uploadForm.category}
-                onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value as Category })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                {visibleCategories.map(category => (
-                  <option key={category} value={category}>{category}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                PDF File (Max 10MB)
-              </label>
-              <input
-                type="file"
-                accept=".pdf"
-                onChange={handleFileChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-            </div>
-            {uploadError && (
-              <div className="flex items-center gap-2 text-red-600 text-sm">
-                <AlertCircle className="h-4 w-4" />
-                {uploadError}
-              </div>
-            )}
-            <button
-              type="submit"
-              disabled={uploading || !uploadForm.file || !uploadForm.title.trim()}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {uploading ? (
-                <>
-                  <Loader className="h-5 w-5 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-5 w-5" />
-                  Upload Resource
-                </>
-              )}
-            </button>
-          </form>
+      <div className="relative max-w-xl">
+        <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+        <input
+          type="text"
+          placeholder="Search resources by title or category..."
+          value={resourceSearchTerm}
+          onChange={(e) => setResourceSearchTerm(e.target.value)}
+          className="w-full pl-12 pr-10 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm bg-white text-gray-900 placeholder-gray-500"
+        />
+        {resourceSearchTerm && (
+          <button
+            onClick={() => setResourceSearchTerm('')}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {resourceSearchTerm.trim() && filteredResources.length === 0 && (
+        <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+          <Search className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+          <p className="text-gray-500 text-lg">No resources found matching "{resourceSearchTerm}"</p>
+          <p className="text-gray-400 text-sm mt-1">Try a different search term</p>
         </div>
       )}
 
-      <div className="space-y-4">
-        {visibleCategories.map(category => {
-          const categoryResources = resourcesByCategory[category];
-          const isExpanded = expandedCategories.has(category);
+      {resourceSearchTerm.trim() && filteredResources.length > 0 && (
+        <p className="text-sm text-gray-500">
+          Found {filteredResources.length} resource{filteredResources.length !== 1 ? 's' : ''} matching "{resourceSearchTerm}"
+        </p>
+      )}
+
+      <div className="grid gap-5">
+        {categoriesToShow.map(category => {
+          const categoryResources = resourcesByCategory[category.name] || [];
+          const isExpanded = resourceSearchTerm.trim() ? true : expandedCategories.has(category.name);
+          const colorConfig = getColorConfig(category.color);
+          const IconComponent = ICON_OPTIONS[category.icon] || FileText;
 
           return (
-            <div key={category} className="bg-white rounded-lg shadow-md overflow-hidden">
+            <div
+              key={category.id}
+              className={`rounded-2xl border-2 ${colorConfig.borderColor} overflow-hidden bg-white shadow-md hover:shadow-lg transition-all duration-200`}
+            >
               <button
-                onClick={() => toggleCategory(category)}
-                className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                onClick={() => toggleCategory(category.name)}
+                className={`w-full px-6 py-5 flex items-center justify-between transition-all duration-200 ${colorConfig.bgColor} ${colorConfig.hoverBg}`}
               >
-                <div className="flex items-center gap-3">
-                  <FileText className="h-5 w-5 text-blue-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">{category}</h3>
-                  <span className="text-sm text-gray-500">
-                    ({categoryResources.length})
-                  </span>
+                <div className="flex items-center gap-5">
+                  <div className={`p-3.5 rounded-xl bg-white shadow-md border-2 ${colorConfig.borderColor}`}>
+                    <IconComponent className={`h-7 w-7 ${colorConfig.color}`} />
+                  </div>
+                  <div className="text-left">
+                    <h3 className={`text-xl font-bold ${colorConfig.color}`}>{category.name}</h3>
+                    <p className="text-sm text-gray-600 mt-1 font-medium">
+                      {categoryResources.length} {categoryResources.length === 1 ? 'document' : 'documents'}
+                    </p>
+                  </div>
                 </div>
-                {isExpanded ? (
-                  <ChevronUp className="h-5 w-5 text-gray-500" />
-                ) : (
-                  <ChevronDown className="h-5 w-5 text-gray-500" />
-                )}
+                <div className={`p-2.5 rounded-xl transition-all duration-200 ${isExpanded ? 'bg-white shadow-md' : ''}`}>
+                  {isExpanded ? (
+                    <ChevronUp className={`h-6 w-6 ${colorConfig.color}`} />
+                  ) : (
+                    <ChevronDown className="h-6 w-6 text-gray-400" />
+                  )}
+                </div>
               </button>
 
-              {isExpanded && (
-                <div className="border-t border-gray-200">
+              <div className={`transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0 overflow-hidden'}`}>
+                <div className="border-t border-gray-100 bg-white">
                   {categoryResources.length === 0 ? (
-                    <div className="px-6 py-8 text-center text-gray-500">
-                      No resources in this category yet
+                    <div className="px-6 py-12 text-center">
+                      <div className={`inline-flex p-3 rounded-full ${colorConfig.bgColor} mb-3`}>
+                        <IconComponent className={`h-6 w-6 ${colorConfig.color} opacity-50`} />
+                      </div>
+                      <p className="text-gray-500 text-sm">No resources in this category yet</p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-gray-200">
-                      {categoryResources.map(resource => (
-                        <div
-                          key={resource.id}
-                          className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-                        >
-                          <div className="flex-1">
-                            <h4 className="font-medium text-gray-900">{resource.title}</h4>
-                            <p className="text-sm text-gray-500 mt-1">
-                              {formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handlePreview(resource)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                              title="View PDF"
-                            >
-                              <Eye className="h-5 w-5" />
-                            </button>
-                            <button
-                              onClick={() => handleDownload(resource)}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                              title="Download"
-                            >
-                              <Download className="h-5 w-5" />
-                            </button>
-                            {isAdmin && (
-                              <>
-                                <button
-                                  onClick={() => handleEditClick(resource)}
-                                  className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                                  title="Edit Category"
+                    <div className="p-3">
+                      <div className="space-y-2">
+                        {categoryResources.map(resource => {
+                          const fileType = getFileType(resource.file_path);
+                          const isVideo = fileType === 'video';
+                          const isLink = fileType === 'link';
+                          const isWord = fileType === 'word';
+                          return (
+                          <div
+                            key={resource.id}
+                            className="group flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50/50 transition-all duration-150"
+                          >
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className={`p-2 rounded-lg group-hover:bg-white group-hover:shadow-sm transition-all duration-150 ${
+                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : isWord ? 'bg-sky-100' : 'bg-gray-100'
+                              }`}>
+                                {isLink ? (
+                                  <Link className="h-4 w-4 text-emerald-600" />
+                                ) : isVideo ? (
+                                  <Video className="h-4 w-4 text-blue-600" />
+                                ) : isWord ? (
+                                  <FileType className="h-4 w-4 text-sky-600" />
+                                ) : (
+                                  <FileText className="h-4 w-4 text-gray-500" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  {isLink ? (
+                                    <a
+                                      href={resource.file_path}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-emerald-600 hover:text-emerald-700 hover:underline truncate text-sm"
+                                    >
+                                      {resource.title}
+                                    </a>
+                                  ) : (
+                                    <h4 className="font-medium text-gray-900 truncate text-sm">{resource.title}</h4>
+                                  )}
+                                  {isLink && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700 rounded flex-shrink-0">
+                                      Link
+                                    </span>
+                                  )}
+                                  {isVideo && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 rounded flex-shrink-0">
+                                      Video
+                                    </span>
+                                  )}
+                                  {isWord && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-sky-100 text-sky-700 rounded flex-shrink-0">
+                                      Word
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-gray-400 mt-0.5">
+                                  {isLink ? (
+                                    <span className="truncate block max-w-xs">{new Date(resource.created_at).toLocaleDateString()}</span>
+                                  ) : (
+                                    <>{formatFileSize(resource.file_size)} • {new Date(resource.created_at).toLocaleDateString()}</>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 ml-3 opacity-70 group-hover:opacity-100 transition-opacity">
+                              {isLink ? (
+                                <a
+                                  href={resource.file_path}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                  title="Open Link"
                                 >
-                                  <Edit className="h-5 w-5" />
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(resource)}
-                                  className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-5 w-5" />
-                                </button>
-                              </>
-                            )}
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              ) : isWord ? (
+                                <>
+                                  <button
+                                    onClick={() => handleDownload(resource)}
+                                    className="p-2 text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
+                                    title="Download to edit locally"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleEmailClick(resource)}
+                                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="Email Document"
+                                  >
+                                    <Mail className="h-4 w-4" />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => handlePreview(resource)}
+                                    className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                    title={isVideo ? 'Play Video' : 'View PDF'}
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDownload(resource)}
+                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                    title="Download"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleEmailClick(resource)}
+                                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                                    title="Email Document"
+                                  >
+                                    <Mail className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
+                              {isAdmin && (
+                                <>
+                                  <button
+                                    onClick={() => handleEditClick(resource)}
+                                    className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                                    title="Edit Category"
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDelete(resource)}
+                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           );
         })}
@@ -512,7 +991,19 @@ export function Resources() {
               </button>
             </div>
             <div className="flex-1 overflow-auto -webkit-overflow-scrolling-touch">
-              {isMobile ? (
+              {getFileType(previewResource.file_path) === 'video' ? (
+                <div className="w-full h-full flex items-center justify-center bg-black p-4">
+                  <video
+                    src={previewUrl}
+                    controls
+                    autoPlay
+                    className="max-w-full max-h-full rounded-lg"
+                    style={{ maxHeight: 'calc(95vh - 80px)' }}
+                  >
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+              ) : isMobile ? (
                 <iframe
                   src={`${previewUrl}#toolbar=0&view=FitH`}
                   className="w-full h-full border-0"
@@ -563,11 +1054,11 @@ export function Resources() {
                 </label>
                 <select
                   value={editCategory}
-                  onChange={(e) => setEditCategory(e.target.value as Category)}
+                  onChange={(e) => setEditCategory(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
-                  {visibleCategories.map(category => (
-                    <option key={category} value={category}>{category}</option>
+                  {categories.map(category => (
+                    <option key={category.id} value={category.name}>{category.name}</option>
                   ))}
                 </select>
               </div>
@@ -597,6 +1088,610 @@ export function Resources() {
             </div>
           </div>
         </div>
+      )}
+
+      {emailResource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Mail className="h-5 w-5 text-amber-600" />
+                Email Document
+              </h3>
+              <button
+                onClick={handleEmailCancel}
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <FileText className="h-8 w-8 text-blue-600" />
+                  <div>
+                    <p className="font-medium text-gray-900">{emailResource.title}</p>
+                    <p className="text-sm text-gray-600">{formatFileSize(emailResource.file_size)}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Recipients
+                </label>
+
+                {emailRecipients.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {emailRecipients.map(email => (
+                      <span
+                        key={email}
+                        className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
+                      >
+                        {email}
+                        <button
+                          onClick={() => handleRemoveRecipient(email)}
+                          className="hover:text-blue-900"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm text-gray-600 mb-1 block">Add external email</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        value={manualEmail}
+                        onChange={(e) => setManualEmail(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddManualEmail();
+                          }
+                        }}
+                        placeholder="client@example.com"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <button
+                        onClick={handleAddManualEmail}
+                        disabled={!manualEmail.trim()}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  {myContacts.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-sm text-gray-600 flex items-center gap-2">
+                          <Users className="w-4 h-4" />
+                          My Contacts ({myContacts.length})
+                        </label>
+                        {filteredContacts.length > 0 && (
+                          <button
+                            onClick={handleSelectAllContacts}
+                            disabled={filteredContacts.every(c => emailRecipients.includes(c.email.toLowerCase()))}
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                          >
+                            {filteredContacts.every(c => emailRecipients.includes(c.email.toLowerCase())) ? (
+                              <CheckSquare className="w-3.5 h-3.5" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5" />
+                            )}
+                            Select All
+                          </button>
+                        )}
+                      </div>
+                      <div className="relative mb-2">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                        <input
+                          type="text"
+                          placeholder="Search contacts..."
+                          value={contactSearchTerm}
+                          onChange={(e) => setContactSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                      </div>
+                      <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto">
+                        {filteredContacts.length === 0 ? (
+                          <div className="p-3 text-center text-gray-500 text-sm">
+                            No contacts found
+                          </div>
+                        ) : (
+                          filteredContacts.map(contact => (
+                            <button
+                              key={contact.id}
+                              onClick={() => handleAddUserEmail(contact.email)}
+                              disabled={emailRecipients.includes(contact.email.toLowerCase())}
+                              className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                                emailRecipients.includes(contact.email.toLowerCase()) ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {contact.first_name} {contact.last_name}
+                                </div>
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                  <Building className="w-3 h-3 flex-shrink-0" />
+                                  <span className="truncate">{contact.company}</span>
+                                </div>
+                                <div className="text-sm text-gray-500 truncate">{contact.email}</div>
+                              </div>
+                              {emailRecipients.includes(contact.email.toLowerCase()) && (
+                                <span className="text-xs text-green-600 font-medium flex-shrink-0 ml-2">Added</span>
+                              )}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {userGroups.length > 0 && (
+                    <div>
+                      <label className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                        <Users className="w-4 h-4" />
+                        Groups ({userGroups.length})
+                      </label>
+                      <div className="border border-gray-300 rounded-lg max-h-48 overflow-y-auto">
+                        {userGroups.map(group => {
+                          const allAdded = group.member_emails.every(e =>
+                            emailRecipients.includes(e.toLowerCase())
+                          );
+                          const someAdded = group.member_emails.some(e =>
+                            emailRecipients.includes(e.toLowerCase())
+                          );
+                          return (
+                            <button
+                              key={group.id}
+                              onClick={() => handleAddGroupEmails(group)}
+                              disabled={allAdded || group.member_count === 0}
+                              className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0 ${
+                                allAdded ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                              }`}
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium text-gray-900 truncate">
+                                  {group.name}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {group.member_count} member{group.member_count !== 1 ? 's' : ''}
+                                  {group.description && ` - ${group.description}`}
+                                </div>
+                              </div>
+                              {allAdded ? (
+                                <span className="text-xs text-green-600 font-medium flex-shrink-0 ml-2">All Added</span>
+                              ) : someAdded ? (
+                                <span className="text-xs text-amber-600 font-medium flex-shrink-0 ml-2">Partial</span>
+                              ) : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm text-gray-600">Team members</label>
+                      {filteredEmailUsers.length > 0 && (
+                        <button
+                          onClick={handleSelectAllUsers}
+                          disabled={filteredEmailUsers.every(u => emailRecipients.includes(u.email.toLowerCase()))}
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+                        >
+                          {filteredEmailUsers.every(u => emailRecipients.includes(u.email.toLowerCase())) ? (
+                            <CheckSquare className="w-3.5 h-3.5" />
+                          ) : (
+                            <Square className="w-3.5 h-3.5" />
+                          )}
+                          Select All
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative mb-2">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <input
+                        type="text"
+                        placeholder="Search team members..."
+                        value={userSearchTerm}
+                        onChange={(e) => setUserSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div className="border border-gray-300 rounded-lg max-h-40 overflow-y-auto">
+                      {filteredEmailUsers.map(u => (
+                        <button
+                          key={u.id}
+                          onClick={() => handleAddUserEmail(u.email)}
+                          disabled={emailRecipients.includes(u.email.toLowerCase())}
+                          className={`w-full flex items-center p-3 text-left hover:bg-gray-50 transition-colors ${
+                            emailRecipients.includes(u.email.toLowerCase()) ? 'opacity-50 cursor-not-allowed bg-gray-50' : ''
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{u.name}</div>
+                            <div className="text-sm text-gray-500">{u.email}</div>
+                          </div>
+                          {emailRecipients.includes(u.email.toLowerCase()) && (
+                            <span className="text-xs text-green-600 font-medium">Added</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Message
+                </label>
+                <textarea
+                  value={emailMessage}
+                  onChange={(e) => setEmailMessage(e.target.value)}
+                  rows={5}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Additional Attachments
+                </label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
+                  <input
+                    type="file"
+                    multiple
+                    onChange={handleAttachmentChange}
+                    className="hidden"
+                    id="email-attachments"
+                  />
+                  <label
+                    htmlFor="email-attachments"
+                    className="flex flex-col items-center cursor-pointer"
+                  >
+                    <Plus className="h-8 w-8 text-gray-400 mb-2" />
+                    <span className="text-sm text-gray-600">Click to add files</span>
+                    <span className="text-xs text-gray-400 mt-1">PDF, Word, images, etc.</span>
+                  </label>
+                </div>
+                {emailAttachments.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    {emailAttachments.map((file, index) => (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                          <span className="text-sm text-gray-700 truncate">{file.name}</span>
+                          <span className="text-xs text-gray-400 flex-shrink-0">
+                            ({(file.size / 1024).toFixed(1)} KB)
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveAttachment(index)}
+                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4 flex gap-3">
+              <button
+                onClick={handleEmailCancel}
+                disabled={emailSending}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSendEmail}
+                disabled={emailSending || emailRecipients.length === 0}
+                className="flex-1 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {emailSending ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="h-4 w-4" />
+                    Send Email
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCategoryManager && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Settings className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Manage Categories</h3>
+                  <p className="text-sm text-gray-500">Add, edit, or organize resource categories</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCategoryManager(false);
+                  handleCancelCategoryEdit();
+                }}
+                className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-4">
+                {categories.map((category) => {
+                  const isEditing = editingCategory?.id === category.id;
+                  const catColorConfig = getColorConfig(category.color);
+                  const CatIcon = ICON_OPTIONS[category.icon] || FileText;
+
+                  if (isEditing) {
+                    return (
+                      <div key={category.id} className="p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Category Name</label>
+                            <input
+                              type="text"
+                              value={newCategoryName}
+                              onChange={(e) => setNewCategoryName(e.target.value)}
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              placeholder="Enter category name"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Icon</label>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(ICON_OPTIONS).map(([iconName, Icon]) => (
+                                <button
+                                  key={iconName}
+                                  onClick={() => setNewCategoryIcon(iconName)}
+                                  className={`p-2.5 rounded-lg border-2 transition-all ${
+                                    newCategoryIcon === iconName
+                                      ? 'border-blue-500 bg-blue-50'
+                                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                                  }`}
+                                >
+                                  <Icon className={`h-5 w-5 ${newCategoryIcon === iconName ? 'text-blue-600' : 'text-gray-500'}`} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                            <div className="flex flex-wrap gap-2">
+                              {COLOR_OPTIONS.map((colorOpt) => (
+                                <button
+                                  key={colorOpt.name}
+                                  onClick={() => setNewCategoryColor(colorOpt.name)}
+                                  className={`p-2.5 rounded-lg border-2 transition-all ${colorOpt.bgColor} ${
+                                    newCategoryColor === colorOpt.name
+                                      ? 'border-gray-800 ring-2 ring-gray-400'
+                                      : `${colorOpt.borderColor} hover:border-gray-400`
+                                  }`}
+                                >
+                                  <Palette className={`h-5 w-5 ${colorOpt.color}`} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              onClick={handleCancelCategoryEdit}
+                              disabled={categoryActionLoading}
+                              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleUpdateCategory}
+                              disabled={categoryActionLoading || !newCategoryName.trim()}
+                              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                            >
+                              {categoryActionLoading ? (
+                                <>
+                                  <Loader className="h-4 w-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="h-4 w-4" />
+                                  Save Changes
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={category.id}
+                      className={`flex items-center justify-between p-4 rounded-xl border-2 ${catColorConfig.borderColor} ${catColorConfig.bgColor} transition-all hover:shadow-sm`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2.5 rounded-lg bg-white shadow-sm border ${catColorConfig.borderColor}`}>
+                          <CatIcon className={`h-5 w-5 ${catColorConfig.color}`} />
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-gray-900">{category.name}</h4>
+                          <p className="text-xs text-gray-500">
+                            {resourcesByCategory[category.name]?.length || 0} documents
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleEditCategoryClick(category)}
+                        className="p-2 text-gray-500 hover:text-gray-700 hover:bg-white rounded-lg transition-colors"
+                        title="Edit category"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {showAddCategory ? (
+                  <div className="p-4 bg-emerald-50 border-2 border-emerald-200 border-dashed rounded-xl">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">New Category Name</label>
+                        <input
+                          type="text"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          placeholder="Enter category name"
+                          autoFocus
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Icon</label>
+                        <div className="flex flex-wrap gap-2">
+                          {Object.entries(ICON_OPTIONS).map(([iconName, Icon]) => (
+                            <button
+                              key={iconName}
+                              onClick={() => setNewCategoryIcon(iconName)}
+                              className={`p-2.5 rounded-lg border-2 transition-all ${
+                                newCategoryIcon === iconName
+                                  ? 'border-emerald-500 bg-emerald-50'
+                                  : 'border-gray-200 hover:border-gray-300 bg-white'
+                              }`}
+                            >
+                              <Icon className={`h-5 w-5 ${newCategoryIcon === iconName ? 'text-emerald-600' : 'text-gray-500'}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Color</label>
+                        <div className="flex flex-wrap gap-2">
+                          {COLOR_OPTIONS.map((colorOpt) => (
+                            <button
+                              key={colorOpt.name}
+                              onClick={() => setNewCategoryColor(colorOpt.name)}
+                              className={`p-2.5 rounded-lg border-2 transition-all ${colorOpt.bgColor} ${
+                                newCategoryColor === colorOpt.name
+                                  ? 'border-gray-800 ring-2 ring-gray-400'
+                                  : `${colorOpt.borderColor} hover:border-gray-400`
+                              }`}
+                            >
+                              <Palette className={`h-5 w-5 ${colorOpt.color}`} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={handleCancelCategoryEdit}
+                          disabled={categoryActionLoading}
+                          className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleAddCategory}
+                          disabled={categoryActionLoading || !newCategoryName.trim()}
+                          className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                        >
+                          {categoryActionLoading ? (
+                            <>
+                              <Loader className="h-4 w-4 animate-spin" />
+                              Creating...
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4" />
+                              Create Category
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowAddCategory(true);
+                      setEditingCategory(null);
+                    }}
+                    className="w-full p-4 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-emerald-400 hover:text-emerald-600 hover:bg-emerald-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Plus className="h-5 w-5" />
+                    Add New Category
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => {
+                  setShowCategoryManager(false);
+                  handleCancelCategoryEdit();
+                }}
+                className="w-full px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notification && (
+        <Toast
+          type={notification.type}
+          message={notification.message}
+          onClose={() => setNotification(null)}
+        />
       )}
     </div>
   );

@@ -42,6 +42,8 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'import_data', label: 'Import Data', description: 'Import contact data' },
   { name: 'resources', label: 'Resources', description: 'View company resources' },
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
+  { name: 'manage_announcements', label: 'Manage Announcements', description: 'Create and manage announcements' },
+  { name: 'employee_communication', label: 'Office Communication', description: 'Send emails and texts to employees' },
   { name: 'edit_admin_fields', label: 'Edit Admin Fields', description: 'Edit assignment, paralegal, preferred vendors, and processor notes', special: true },
 ];
 

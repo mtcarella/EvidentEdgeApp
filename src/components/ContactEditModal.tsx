@@ -45,9 +45,9 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
     company: contact.company || '',
     branch: contact.branch || '',
     address: contact.address || '',
-    paralegal: contact.paralegal || '',
     client_paralegal_processor: contact.client_paralegal_processor || '',
     evident_paralegal: contact.evident_paralegal || '',
+    client_identifier_no: contact.client_identifier_no || '',
     preferred_surveyor: contact.preferred_surveyor || '',
     preferred_uw: contact.preferred_uw || '',
     preferred_closer: contact.preferred_closer || '',
@@ -90,12 +90,12 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
         grade: editForm.grade,
         marketing_points: editForm.marketing_points,
         client_paralegal_processor: toNullIfEmpty(editForm.client_paralegal_processor),
-        evident_paralegal: toNullIfEmpty(editForm.evident_paralegal),
+        client_identifier_no: toNullIfEmpty(editForm.client_identifier_no),
       };
 
       // Admin/processor only fields
       const adminData = canEditAdminFields ? {
-        paralegal: editForm.type === 'attorney' ? toNullIfEmpty(editForm.paralegal) : null,
+        evident_paralegal: toNullIfEmpty(editForm.evident_paralegal),
         preferred_surveyor: toNullIfEmpty(editForm.preferred_surveyor),
         preferred_uw: toNullIfEmpty(editForm.preferred_uw),
         preferred_closer: toNullIfEmpty(editForm.preferred_closer),
@@ -278,18 +278,28 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Evident Paralegal</label>
-              <select
-                value={editForm.evident_paralegal}
-                onChange={(e) => setEditForm({ ...editForm, evident_paralegal: e.target.value })}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="">None</option>
-                <option value="Kristen">Kristen</option>
-                <option value="Lisa">Lisa</option>
-                <option value="Raphael">Raphael</option>
-                <option value="Danielle">Danielle</option>
-                <option value="Elizabeth">Elizabeth</option>
-              </select>
+              {canEditAdminFields ? (
+                <select
+                  value={editForm.evident_paralegal}
+                  onChange={(e) => setEditForm({ ...editForm, evident_paralegal: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value="">None</option>
+                  <option value="Danielle">Danielle</option>
+                  <option value="Elizabeth">Elizabeth</option>
+                  <option value="Jahaira">Jahaira</option>
+                  <option value="Kristen">Kristen</option>
+                  <option value="Lisa">Lisa</option>
+                  <option value="Raphael">Raphael</option>
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={editForm.evident_paralegal || 'None'}
+                  disabled
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-600 cursor-not-allowed"
+                />
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
@@ -328,6 +338,16 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
               />
             </div>
             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Client Identifier No.</label>
+              <input
+                type="text"
+                value={editForm.client_identifier_no}
+                onChange={(e) => setEditForm({ ...editForm, client_identifier_no: e.target.value })}
+                placeholder="Enter client identifier..."
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Branch</label>
               <select
                 value={editForm.branch}
@@ -340,32 +360,6 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
                 <option value="ETA 3">ETA 3</option>
               </select>
             </div>
-            {editForm.type === 'attorney' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Evident Paralegal</label>
-                {canEditAdminFields ? (
-                  <select
-                    value={editForm.paralegal}
-                    onChange={(e) => setEditForm({ ...editForm, paralegal: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="">None</option>
-                    <option value="Kristen">Kristen</option>
-                    <option value="Lisa">Lisa</option>
-                    <option value="Raphael">Raphael</option>
-                    <option value="Danielle">Danielle</option>
-                    <option value="Elizabeth">Elizabeth</option>
-                  </select>
-                ) : (
-                  <input
-                    type="text"
-                    value={editForm.paralegal || 'None'}
-                    disabled
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-slate-50 text-slate-600 cursor-not-allowed"
-                  />
-                )}
-              </div>
-            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Assigned To</label>
               {canEditAdminFields ? (

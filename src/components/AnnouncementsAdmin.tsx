@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Pin, PinOff, Eye, EyeOff, AlertTriangle, Info, FileText, X, Save, Calendar, Clock, Paperclip, Download } from 'lucide-react';
+import { Plus, CreditCard as Edit2, Trash2, Pin, PinOff, Eye, EyeOff, AlertTriangle, Info, FileText, X, Save, Calendar, Clock, Paperclip, Download } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -7,7 +7,7 @@ interface Announcement {
   id: string;
   title: string;
   content: string;
-  category: 'urgent' | 'informational' | 'procedural';
+  category: 'time sensitive' | 'informational' | 'procedural';
   is_active: boolean;
   is_pinned: boolean;
   created_at: string;
@@ -21,7 +21,7 @@ interface Announcement {
 }
 
 const categoryConfig = {
-  urgent: {
+  'time sensitive': {
     icon: AlertTriangle,
     label: 'Time Sensitive',
     description: 'Time-sensitive updates requiring immediate attention',
@@ -61,7 +61,7 @@ export function AnnouncementsAdmin() {
   const [formData, setFormData] = useState({
     title: '',
     content: '',
-    category: 'informational' as 'urgent' | 'informational' | 'procedural',
+    category: 'informational' as 'time sensitive' | 'informational' | 'procedural',
     is_pinned: false,
     expires_at: '',
   });
@@ -79,24 +79,29 @@ export function AnnouncementsAdmin() {
       const { data, error } = await supabase
         .from('announcements')
         .select('*')
-        .order('is_pinned', { ascending: false })
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      const announcementsWithCreators = await Promise.all(
-        (data || []).map(async (announcement) => {
-          if (announcement.created_by) {
-            const { data: creator } = await supabase
-              .from('sales_people')
-              .select('name')
-              .eq('user_id', announcement.created_by)
-              .maybeSingle();
-            return { ...announcement, creator_name: creator?.name || 'Unknown' };
-          }
-          return { ...announcement, creator_name: 'System' };
-        })
-      );
+      const creatorIds = [...new Set((data || []).map(a => a.created_by).filter(Boolean))];
+
+      let creatorMap: Record<string, string> = {};
+      if (creatorIds.length > 0) {
+        const { data: creators } = await supabase
+          .from('sales_people')
+          .select('user_id, name')
+          .in('user_id', creatorIds);
+
+        creatorMap = (creators || []).reduce((acc, c) => {
+          acc[c.user_id] = c.name;
+          return acc;
+        }, {} as Record<string, string>);
+      }
+
+      const announcementsWithCreators = (data || []).map((announcement) => ({
+        ...announcement,
+        creator_name: announcement.created_by ? creatorMap[announcement.created_by] || 'Unknown' : 'System'
+      }));
 
       setAnnouncements(announcementsWithCreators);
     } catch (error) {
@@ -172,9 +177,7 @@ export function AnnouncementsAdmin() {
       if (removeAttachment && existingAttachment) {
         await supabase.storage.from('announcement-attachments').remove([existingAttachment.path]);
       }
-      // Handle new file upload
       else if (selectedFile) {
-        // If editing and replacing an existing attachment, delete the old one
         if (editingAnnouncement && existingAttachment) {
           await supabase.storage.from('announcement-attachments').remove([existingAttachment.path]);
         }
@@ -183,11 +186,33 @@ export function AnnouncementsAdmin() {
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = fileName;
 
-        const { error: uploadError } = await supabase.storage
-          .from('announcement-attachments')
-          .upload(filePath, selectedFile);
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
 
-        if (uploadError) throw uploadError;
+        const uploadUrl = `${supabaseUrl}/storage/v1/object/announcement-attachments/${filePath}`;
+
+        const uploadResponse = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken || supabaseKey}`,
+            'apikey': supabaseKey,
+            'Content-Type': selectedFile.type || 'application/octet-stream',
+            'x-upsert': 'false',
+            'cache-control': 'max-age=3600'
+          },
+          body: selectedFile
+        });
+
+        if (!uploadResponse.ok) {
+          const errorText = await uploadResponse.text();
+          console.error('Upload error:', uploadResponse.status, errorText);
+          if (uploadResponse.status === 403 || uploadResponse.status === 401) {
+            throw new Error('You do not have permission to upload files. Please contact an administrator.');
+          }
+          throw new Error(`File upload failed: ${errorText || 'Please try again'}`);
+        }
 
         attachmentData = {
           attachment_name: selectedFile.name,
@@ -234,7 +259,12 @@ export function AnnouncementsAdmin() {
       setShowModal(false);
       fetchAnnouncements();
     } catch (error: any) {
-      setFormError(error.message || 'Failed to save announcement');
+      console.error('Announcement save error:', error);
+      if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+        setFormError('Network error. Please check your connection and try again.');
+      } else {
+        setFormError(error.message || 'Failed to save announcement');
+      }
     } finally {
       setSaving(false);
     }
@@ -559,7 +589,7 @@ export function AnnouncementsAdmin() {
                       <button
                         key={key}
                         type="button"
-                        onClick={() => setFormData({ ...formData, category: key as 'urgent' | 'informational' | 'procedural' })}
+                        onClick={() => setFormData({ ...formData, category: key as 'time sensitive' | 'informational' | 'procedural' })}
                         className={`p-3 rounded-lg border-2 text-left transition-all ${
                           formData.category === key
                             ? `${config.borderColor} ${config.bgColor}`

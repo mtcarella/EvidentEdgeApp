@@ -3,6 +3,7 @@ import { useAuth } from './contexts/AuthContext';
 import { LoginForm } from './components/LoginForm';
 import { Dashboard } from './components/Dashboard';
 import { ResetPassword } from './components/ResetPassword';
+import { FloatingChat } from './components/FloatingChat';
 
 function App() {
   const { user, loading } = useAuth();
@@ -19,11 +20,14 @@ function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/" element={user ? <Dashboard /> : <LoginForm />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/" element={user ? <Dashboard /> : <LoginForm />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {user && <FloatingChat />}
+    </>
   );
 }
 

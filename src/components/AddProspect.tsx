@@ -15,7 +15,9 @@ export function AddProspect() {
   const [company, setCompany] = useState('');
   const [branch, setBranch] = useState('');
   const [address, setAddress] = useState('');
-  const [paralegal, setParalegal] = useState('');
+  const [clientIdentifierNo, setClientIdentifierNo] = useState('');
+  const [evidentParalegal, setEvidentParalegal] = useState('');
+  const [clientParalegalProcessor, setClientParalegalProcessor] = useState('');
   const [preferredSurveyor, setPreferredSurveyor] = useState('');
   const [preferredUw, setPreferredUw] = useState('');
   const [preferredCloser, setPreferredCloser] = useState('');
@@ -71,7 +73,7 @@ export function AddProspect() {
     try {
       const { data, error } = await supabase
         .from('contacts')
-        .select('id, name, first_name, last_name, type, email, phone, cell_phone, company, branch, address, paralegal, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
+        .select('id, name, first_name, last_name, type, email, phone, cell_phone, company, branch, address, client_identifier_no, evident_paralegal, client_paralegal_processor, preferred_surveyor, preferred_uw, preferred_closer, birthday, drinks, marketing_points, notes, processor_notes')
         .or(`name.ilike.%${searchTerm}%,first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%,company.ilike.%${searchTerm}%`)
         .order('name')
         .limit(10);
@@ -96,7 +98,9 @@ export function AddProspect() {
     setCompany(contact.company || '');
     setBranch(contact.branch || '');
     setAddress(contact.address || '');
-    setParalegal(contact.type === 'attorney' ? (contact.paralegal || '') : '');
+    setClientIdentifierNo(contact.client_identifier_no || '');
+    setEvidentParalegal(contact.evident_paralegal || '');
+    setClientParalegalProcessor(contact.client_paralegal_processor || '');
     setPreferredSurveyor(contact.preferred_surveyor || '');
     setPreferredUw(contact.preferred_uw || '');
     setPreferredCloser(contact.preferred_closer || '');
@@ -156,10 +160,6 @@ export function AddProspect() {
 
   const handleTypeChange = (newType: 'buyer' | 'realtor' | 'attorney' | 'loan_officer' | 'vendor') => {
     setType(newType);
-    // Clear paralegal field if type is not attorney
-    if (newType !== 'attorney') {
-      setParalegal('');
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -190,7 +190,6 @@ export function AddProspect() {
         company: company || null,
         branch: branch || null,
         address: address || null,
-        paralegal: type === 'attorney' ? (paralegal || null) : null,
         notes: notes || null,
       });
 
@@ -199,6 +198,9 @@ export function AddProspect() {
         type,
         assigned_to: selectedSalesperson,
         updated_by: user?.id,
+        client_identifier_no: clientIdentifierNo || null,
+        evident_paralegal: evidentParalegal || null,
+        client_paralegal_processor: clientParalegalProcessor || null,
         preferred_surveyor: preferredSurveyor || null,
         preferred_uw: preferredUw || null,
         preferred_closer: preferredCloser || null,
@@ -280,7 +282,9 @@ export function AddProspect() {
       setCompany('');
       setBranch('');
       setAddress('');
-      setParalegal('');
+      setClientIdentifierNo('');
+      setEvidentParalegal('');
+      setClientParalegalProcessor('');
       setPreferredSurveyor('');
       setPreferredUw('');
       setPreferredCloser('');
@@ -477,7 +481,7 @@ export function AddProspect() {
               id="email"
               type="email"
               value={email}
-              onChange={(e) => handleEmailChange(e.target.value)}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             />
           </div>
@@ -524,6 +528,20 @@ export function AddProspect() {
           </div>
 
           <div>
+            <label htmlFor="clientIdentifierNo" className="block text-sm font-medium text-slate-700 mb-2">
+              Client Identifier No.
+            </label>
+            <input
+              id="clientIdentifierNo"
+              type="text"
+              value={clientIdentifierNo}
+              onChange={(e) => setClientIdentifierNo(e.target.value)}
+              placeholder="Enter client identifier..."
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            />
+          </div>
+
+          <div>
             <label htmlFor="branch" className="block text-sm font-medium text-slate-700 mb-2">
               Branch
             </label>
@@ -554,25 +572,40 @@ export function AddProspect() {
           />
         </div>
 
-        {type === 'attorney' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div>
-            <label htmlFor="paralegal" className="block text-sm font-medium text-slate-700 mb-2">
+            <label htmlFor="evidentParalegal" className="block text-sm font-medium text-slate-700 mb-2">
               Evident Paralegal
             </label>
             <select
-              id="paralegal"
-              value={paralegal}
-              onChange={(e) => setParalegal(e.target.value)}
+              id="evidentParalegal"
+              value={evidentParalegal}
+              onChange={(e) => setEvidentParalegal(e.target.value)}
               className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             >
               <option value="">None</option>
+              <option value="Danielle">Danielle</option>
+              <option value="Elizabeth">Elizabeth</option>
+              <option value="Jahaira">Jahaira</option>
               <option value="Kristen">Kristen</option>
               <option value="Lisa">Lisa</option>
               <option value="Raphael">Raphael</option>
-              <option value="Danielle">Danielle</option>
             </select>
           </div>
-        )}
+          <div>
+            <label htmlFor="clientParalegalProcessor" className="block text-sm font-medium text-slate-700 mb-2">
+              Client Paralegal/Processor
+            </label>
+            <input
+              id="clientParalegalProcessor"
+              type="text"
+              value={clientParalegalProcessor}
+              onChange={(e) => setClientParalegalProcessor(e.target.value)}
+              placeholder="Enter client paralegal or processor name..."
+              className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            />
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div>

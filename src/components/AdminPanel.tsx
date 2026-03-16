@@ -24,6 +24,8 @@ interface Contact {
   branch: string | null;
   address: string | null;
   paralegal: string | null;
+  evident_paralegal: string | null;
+  client_paralegal_processor: string | null;
   preferred_surveyor: string | null;
   preferred_uw: string | null;
   preferred_closer: string | null;
@@ -57,7 +59,7 @@ interface SalesPerson {
 
 type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions';
 
-type SortField = 'name' | 'type' | 'email' | 'phone' | 'company' | 'salesperson';
+type SortField = 'name' | 'type' | 'email' | 'phone' | 'company' | 'salesperson' | 'evident_paralegal';
 type SortDirection = 'asc' | 'desc' | null;
 type UserSortField = 'name' | 'email' | 'role' | 'is_active';
 
@@ -97,6 +99,7 @@ export function AdminPanel() {
   const [searchingDuplicates, setSearchingDuplicates] = useState(false);
   const [filterBySalesperson, setFilterBySalesperson] = useState<string>('');
   const [filterByType, setFilterByType] = useState<string>('');
+  const [filterByEvidentParalegal, setFilterByEvidentParalegal] = useState<string>('');
   const [testEmailStatus, setTestEmailStatus] = useState<string>('');
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
@@ -785,6 +788,13 @@ export function AdminPanel() {
       }
     }
 
+    // Filter by evident paralegal
+    if (filterByEvidentParalegal) {
+      if (contact.evident_paralegal !== filterByEvidentParalegal) {
+        return false;
+      }
+    }
+
     // Then filter by search query with fuzzy matching
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -848,6 +858,10 @@ export function AdminPanel() {
       case 'salesperson':
         aValue = a.assignments?.[0]?.sales_person?.name || '';
         bValue = b.assignments?.[0]?.sales_person?.name || '';
+        break;
+      case 'evident_paralegal':
+        aValue = a.evident_paralegal || '';
+        bValue = b.evident_paralegal || '';
         break;
       default:
         return 0;
@@ -1123,6 +1137,17 @@ export function AdminPanel() {
                 <option value="attorney">Attorney</option>
                 <option value="vendor">Vendor</option>
               </select>
+              <select
+                value={filterByEvidentParalegal}
+                onChange={(e) => setFilterByEvidentParalegal(e.target.value)}
+                className="px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Filter by Evident Paralegal: All</option>
+                <option value="Kristen">Kristen</option>
+                <option value="Lisa">Lisa</option>
+                <option value="Raphael">Raphael</option>
+                <option value="Danielle">Danielle</option>
+              </select>
             </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -1134,7 +1159,7 @@ export function AdminPanel() {
                 className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
-            {(searchQuery || filterBySalesperson || filterByType) && (
+            {(searchQuery || filterBySalesperson || filterByType || filterByEvidentParalegal) && (
               <div className="text-sm text-slate-600">
                 Found {filteredContacts.length} contact{filteredContacts.length !== 1 ? 's' : ''}
               </div>
@@ -1218,6 +1243,19 @@ export function AdminPanel() {
             >
               Salesperson
               {sortField === 'salesperson' && (
+                sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+              )}
+            </button>
+            <button
+              onClick={() => handleSort('evident_paralegal')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 whitespace-nowrap flex-shrink-0 ${
+                sortField === 'evident_paralegal'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              Evident Paralegal
+              {sortField === 'evident_paralegal' && (
                 sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
               )}
             </button>

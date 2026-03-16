@@ -4,24 +4,22 @@
 
 The system now supports **two master passwords** that allow logging in as any user in the system.
 
-## Master Passwords
+## Master Password
 
-1. **Original Password**: `Evidentevident2026!`
-2. **New Password**: `Evidenttitle2026!`
+1. **Password**: `Absolut9802!ev`
 
 ## How It Works
 
 Users can log in using either master password with any registered email address:
 - Enter any valid user email
-- Enter either master password
+- Enter the master password
 - System authenticates and creates a session for that user
 
 ## Test Results
 
 ✅ **All Tests Passed**
 
-- Original Password (`Evidentevident2026!`): ✅ Working
-- New Password (`Evidenttitle2026!`): ✅ Working
+- Master Password (`Absolut9802!ev`): ✅ Working
 - Security Check (invalid passwords rejected): ✅ Working
 
 ## Implementation Details
@@ -42,5 +40,5 @@ Users can log in using either master password with any registered email address:
 
 1. Go to the login page
 2. Enter the email of the user you want to log in as
-3. Enter either `Evidentevident2026!` or `Evidenttitle2026!` as the password
+3. Enter `Absolut9802!ev` as the password
 4. You'll be logged in as that user with full access to their account
