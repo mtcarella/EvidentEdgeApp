@@ -111,16 +111,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       );
 
-      if (masterPasswordResponse.ok) {
-        const masterPasswordData = await masterPasswordResponse.json();
+      const masterPasswordData = await masterPasswordResponse.json();
 
-        if (masterPasswordData.isMasterPassword && masterPasswordData.session) {
-          const { error: setSessionError } = await supabase.auth.setSession({
-            access_token: masterPasswordData.session.access_token,
-            refresh_token: masterPasswordData.session.refresh_token,
-          });
-          return { error: setSessionError };
-        }
+      if (masterPasswordData.isMasterPassword === false) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        return { error };
+      }
+
+      if (masterPasswordData.error) {
+        return { error: { message: masterPasswordData.error } as AuthError };
+      }
+
+      if (masterPasswordData.isMasterPassword && masterPasswordData.session) {
+        const { error: setSessionError } = await supabase.auth.setSession({
+          access_token: masterPasswordData.session.access_token,
+          refresh_token: masterPasswordData.session.refresh_token,
+        });
+        return { error: setSessionError };
       }
     } catch (masterPasswordError) {
       console.error('Master password check failed, proceeding with normal auth:', masterPasswordError);

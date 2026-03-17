@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, User, Users, Briefcase, Scale, Edit2, X, Save, Eye, Cake, Wrench } from 'lucide-react';
+import { Search, User, Users, Briefcase, Scale, CreditCard as Edit2, X, Save, Eye, Cake, Wrench } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -21,7 +21,7 @@ interface SearchResult {
   cell_phone?: string;
   company?: string;
   address?: string;
-  paralegal?: string;
+  evident_paralegal?: string;
   preferred_surveyor?: string;
   preferred_uw?: string;
   preferred_closer?: string;
@@ -154,7 +154,7 @@ export function ContactSearch() {
           company,
           branch,
           address,
-          paralegal,
+          evident_paralegal,
           preferred_surveyor,
           preferred_uw,
           preferred_closer,
@@ -218,7 +218,7 @@ export function ContactSearch() {
             phone: contact.phone,
             company: contact.company,
             address: contact.address,
-            paralegal: contact.paralegal,
+            evident_paralegal: contact.evident_paralegal,
             preferred_surveyor: contact.preferred_surveyor,
             preferred_uw: contact.preferred_uw,
             preferred_closer: contact.preferred_closer,
@@ -352,7 +352,7 @@ export function ContactSearch() {
         company: contact.company,
         branch: contact.branch,
         address: contact.address,
-        paralegal: contact.paralegal,
+        evident_paralegal: contact.evident_paralegal,
         preferred_surveyor: contact.preferred_surveyor,
         preferred_uw: contact.preferred_uw,
         preferred_closer: contact.preferred_closer,
@@ -379,7 +379,7 @@ export function ContactSearch() {
       company: result.company || '',
       branch: result.branch || '',
       address: result.address || '',
-      paralegal: result.paralegal || '',
+      evident_paralegal: result.evident_paralegal || '',
       preferred_surveyor: result.preferred_surveyor || '',
       preferred_uw: result.preferred_uw || '',
       preferred_closer: result.preferred_closer || '',
@@ -419,7 +419,7 @@ export function ContactSearch() {
       };
 
       const adminData = canEditAdminFields ? {
-        paralegal: currentResult.type === 'attorney' ? (editForm.paralegal || null) : null,
+        evident_paralegal: currentResult.type === 'attorney' ? (editForm.evident_paralegal || null) : null,
         preferred_surveyor: editForm.preferred_surveyor || null,
         preferred_uw: editForm.preferred_uw || null,
         preferred_closer: editForm.preferred_closer || null,
@@ -692,8 +692,8 @@ export function ContactSearch() {
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">Evident Paralegal</label>
                           <select
-                            value={editForm.paralegal || ''}
-                            onChange={(e) => setEditForm({ ...editForm, paralegal: e.target.value })}
+                            value={editForm.evident_paralegal || ''}
+                            onChange={(e) => setEditForm({ ...editForm, evident_paralegal: e.target.value })}
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                           >
                             <option value="">None</option>
@@ -801,7 +801,7 @@ export function ContactSearch() {
                           {result.phone && <p>Phone: {result.phone}</p>}
                           {result.company && <p>Company: {result.company}</p>}
                           {result.address && <p>Address: {result.address}</p>}
-                          {result.type === 'attorney' && result.paralegal && <p>Evident Paralegal: {result.paralegal}</p>}
+                          {result.type === 'attorney' && result.evident_paralegal && <p>Evident Paralegal: {result.evident_paralegal}</p>}
                           {result.birthday && <p>Birthday: {formatDateShort(result.birthday)}</p>}
                           {result.drinks !== null && result.drinks !== undefined && <p>Drinks: {result.drinks ? 'Yes' : 'No'}</p>}
                           {(isAdminOrProcessor || hasAccess('edit_admin_fields')) && result.preferred_surveyor && (

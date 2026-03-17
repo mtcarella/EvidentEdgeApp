@@ -23,7 +23,6 @@ interface Contact {
   company: string | null;
   branch: string | null;
   address: string | null;
-  paralegal: string | null;
   evident_paralegal: string | null;
   client_paralegal_processor: string | null;
   preferred_surveyor: string | null;
@@ -204,7 +203,7 @@ export function AdminPanel() {
           company: editForm.company,
           branch: editForm.branch,
           address: editForm.address,
-          paralegal: editForm.paralegal || null,
+          evident_paralegal: editForm.evident_paralegal || null,
           preferred_surveyor: editForm.preferred_surveyor || null,
           preferred_uw: editForm.preferred_uw || null,
           preferred_closer: editForm.preferred_closer || null,
@@ -635,7 +634,7 @@ export function AdminPanel() {
         }
 
         if (batchParalegalId) {
-          updateData.paralegal = batchParalegalId || null;
+          updateData.evident_paralegal = batchParalegalId || null;
         }
 
         if (batchClientType) {
@@ -946,7 +945,7 @@ export function AdminPanel() {
             'Company': contact.company || '',
             'Branch': contact.branch || '',
             'Address': contact.address || '',
-            'Evident Paralegal': contact.paralegal || '',
+            'Evident Paralegal': contact.evident_paralegal || '',
             'Assigned To': contact.assignments?.[0]?.sales_person?.name || 'Unassigned',
             'Notes': contact.notes || '',
             'Meetings': meetingsText,
@@ -1428,10 +1427,10 @@ export function AdminPanel() {
                             <span className="ml-2 text-slate-600">{contact.branch}</span>
                           </div>
                         )}
-                        {contact.type === 'attorney' && contact.paralegal && (
+                        {contact.type === 'attorney' && contact.evident_paralegal && (
                           <div>
                             <span className="font-medium text-slate-700">Evident Paralegal:</span>
-                            <span className="ml-2 text-slate-600">{contact.paralegal}</span>
+                            <span className="ml-2 text-slate-600">{contact.evident_paralegal}</span>
                           </div>
                         )}
                         {contact.client_type && (
