@@ -585,7 +585,6 @@ export function AddProspect() {
             >
               <option value="">None</option>
               <option value="Danielle">Danielle</option>
-              <option value="Elizabeth">Elizabeth</option>
               <option value="Jahaira">Jahaira</option>
               <option value="Kristen">Kristen</option>
               <option value="Lisa">Lisa</option>

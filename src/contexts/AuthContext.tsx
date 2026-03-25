@@ -8,6 +8,7 @@ interface SalesPerson {
   name: string;
   email: string;
   role: 'salesperson' | 'closer' | 'processor' | 'admin' | 'super_admin' | 'sales_processor';
+  force_password_reset: boolean;
 }
 
 interface AuthContextType {
@@ -19,6 +20,8 @@ interface AuthContextType {
   isAdmin: boolean;
   isSuperAdmin: boolean;
   isAdminOrProcessor: boolean;
+  forcePasswordReset: boolean;
+  clearForcePasswordReset: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
@@ -37,11 +40,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role')
+      .select('id, user_id, name, email, role, force_password_reset')
       .eq('user_id', userId)
       .maybeSingle();
 
     setSalesPerson(data);
+  };
+
+  const clearForcePasswordReset = async () => {
+    if (!salesPerson) return;
+
+    await supabase
+      .from('sales_people')
+      .update({ force_password_reset: false })
+      .eq('id', salesPerson.id);
+
+    setSalesPerson({ ...salesPerson, force_password_reset: false });
   };
 
   const updateLastActivity = () => {
@@ -171,9 +185,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isSuperAdmin = salesPerson?.role === 'super_admin';
   const isAdminOrProcessor = salesPerson?.role === 'admin' || salesPerson?.role === 'processor' || salesPerson?.role === 'super_admin' || salesPerson?.role === 'sales_processor';
   const salesPersonId = salesPerson?.id || null;
+  const forcePasswordReset = salesPerson?.force_password_reset ?? false;
 
   return (
-    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, forcePasswordReset, clearForcePasswordReset, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

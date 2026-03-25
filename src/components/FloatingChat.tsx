@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { MessageCircle, X, Send, ChevronUp, Maximize2, Users, ArrowLeft, Search, Phone, Mail, Clock, ChevronRight, Coffee, Briefcase, Calendar, Palmtree } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDeviceDetection } from '../lib/deviceDetection';
 
 interface User {
   id: string;
@@ -94,6 +95,7 @@ const roleBadgeColors: Record<string, string> = {
 
 export function FloatingChat() {
   const { user, salesPerson } = useAuth();
+  const { isMobile } = useDeviceDetection();
   const [isOpen, setIsOpen] = useState(true);
   const [isMinimized, setIsMinimized] = useState(true);
   const [view, setView] = useState<'list' | 'chat' | 'users'>('list');
@@ -963,8 +965,21 @@ export function FloatingChat() {
         </button>
       )}
 
-      <div className="fixed bottom-0 right-6 z-50">
+      <div className={`fixed z-50 ${isMobile ? 'bottom-4 right-4' : 'bottom-0 right-6'}`}>
         {isMinimized ? (
+          isMobile ? (
+            <button
+              onClick={() => setIsMinimized(false)}
+              className="w-12 h-12 bg-gradient-to-r from-blue-600 to-blue-700 rounded-full shadow-lg flex items-center justify-center text-white hover:from-blue-700 hover:to-blue-800 transition-all relative"
+            >
+              <MessageCircle className="w-5 h-5" />
+              {totalUnread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center animate-pulse">
+                  {totalUnread}
+                </span>
+              )}
+            </button>
+          ) : (
           <div
             onClick={() => setIsMinimized(false)}
             className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-t-2xl shadow-2xl w-80 cursor-pointer hover:from-blue-700 hover:to-blue-800 transition-all"
@@ -996,8 +1011,13 @@ export function FloatingChat() {
               </div>
             </div>
           </div>
+          )
         ) : (
-          <div className="bg-white rounded-t-2xl shadow-2xl border border-slate-200 border-b-0 w-[420px] h-[600px] flex flex-col overflow-hidden animate-scale-in">
+          <div className={`bg-white shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-scale-in ${
+            isMobile
+              ? 'fixed inset-0 rounded-none border-0 w-full h-full'
+              : 'rounded-t-2xl border-b-0 w-[420px] h-[600px]'
+          }`}>
             <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 flex items-center justify-between text-white">
               <div className="flex items-center gap-3">
                 {view !== 'list' && (

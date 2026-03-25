@@ -13,6 +13,7 @@ interface SalesPerson {
   birthday?: string | null;
   requires_daily_reports?: boolean;
   requires_weekly_reports?: boolean;
+  force_password_reset?: boolean;
 }
 
 interface UserEditPanelProps {
@@ -50,6 +51,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
     birthday: user.birthday || '',
     requires_daily_reports: user.requires_daily_reports || false,
     requires_weekly_reports: user.requires_weekly_reports || false,
+    force_password_reset: user.force_password_reset || false,
   });
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -108,6 +110,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
         birthday: editForm.birthday || null,
         requires_daily_reports: editForm.requires_daily_reports,
         requires_weekly_reports: editForm.requires_weekly_reports,
+        force_password_reset: editForm.force_password_reset,
       };
 
       const { error: userError } = await supabase
@@ -300,6 +303,24 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
                 <p className="text-xs text-slate-500 mt-1">User will need to log in with the new password immediately.</p>
               </>
             )}
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Force Password Reset on Next Login
+            </label>
+            <div
+              className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+              onClick={() => setEditForm({ ...editForm, force_password_reset: !editForm.force_password_reset })}
+            >
+              {editForm.force_password_reset ? (
+                <CheckSquare className="w-5 h-5 text-orange-600" />
+              ) : (
+                <Square className="w-5 h-5 text-slate-400" />
+              )}
+              <span className="text-sm text-slate-700">Require password change on next login</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">When enabled, this user will be prompted to create a new password the next time they log in.</p>
           </div>
 
           <div>

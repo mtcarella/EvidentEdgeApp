@@ -380,7 +380,7 @@ export function MeetingLogsReport() {
         'Interaction Type': meetingTypes.join(', ') || 'Not specified',
         'Has Expense': showExpense && meeting.has_expense ? 'Yes' : 'No',
         'Payment Method': showExpense && meeting.expense_payment_method ? (meeting.expense_payment_method === 'personal' ? 'Personal' : 'Company') : '',
-        'Expense Amount': showExpense && meeting.expense_amount ? `$${parseFloat(meeting.expense_amount.toString()).toFixed(2)}` : '',
+        'Expense Amount': showExpense && meeting.expense_amount ? parseFloat(meeting.expense_amount.toString()) : '',
         'Receipt Included': showExpense && meeting.receipt_url ? 'Yes' : 'No',
         'Salesperson': meeting.salesperson.name,
         'Contact Name': meeting.contact.name,

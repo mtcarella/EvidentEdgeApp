@@ -4,9 +4,10 @@ import { LoginForm } from './components/LoginForm';
 import { Dashboard } from './components/Dashboard';
 import { ResetPassword } from './components/ResetPassword';
 import { FloatingChat } from './components/FloatingChat';
+import { ForcePasswordReset } from './components/ForcePasswordReset';
 
 function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, forcePasswordReset } = useAuth();
 
   if (loading) {
     return (
@@ -17,6 +18,10 @@ function App() {
         </div>
       </div>
     );
+  }
+
+  if (user && forcePasswordReset) {
+    return <ForcePasswordReset />;
   }
 
   return (
