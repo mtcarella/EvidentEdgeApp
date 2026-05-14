@@ -14,6 +14,7 @@ interface SalesPerson {
   requires_daily_reports?: boolean;
   requires_weekly_reports?: boolean;
   force_password_reset?: boolean;
+  chat_enabled?: boolean;
 }
 
 interface UserEditPanelProps {
@@ -39,6 +40,7 @@ const AVAILABLE_MODULES = [
   { name: 'import_data', label: 'Import Data', description: 'Import contact data' },
   { name: 'resources', label: 'Resources', description: 'View company resources' },
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
+  { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
 ];
 
 export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
@@ -52,6 +54,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
     requires_daily_reports: user.requires_daily_reports || false,
     requires_weekly_reports: user.requires_weekly_reports || false,
     force_password_reset: user.force_password_reset || false,
+    chat_enabled: user.chat_enabled !== false,
   });
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -111,6 +114,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
         requires_daily_reports: editForm.requires_daily_reports,
         requires_weekly_reports: editForm.requires_weekly_reports,
         force_password_reset: editForm.force_password_reset,
+        chat_enabled: editForm.chat_enabled,
       };
 
       const { error: userError } = await supabase
@@ -353,6 +357,21 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
               <option value="yes">Yes</option>
               <option value="no">No</option>
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Chat Feature
+            </label>
+            <select
+              value={editForm.chat_enabled ? 'yes' : 'no'}
+              onChange={(e) => setEditForm({ ...editForm, chat_enabled: e.target.value === 'yes' })}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+            <p className="text-xs text-slate-500 mt-1">Enable or disable chat/messaging feature for this user</p>
           </div>
 
           <div>

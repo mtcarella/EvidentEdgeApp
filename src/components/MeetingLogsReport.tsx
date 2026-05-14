@@ -773,7 +773,7 @@ export function MeetingLogsReport() {
                             )}
                             {meeting.has_expense && meeting.is_primary_for_expense !== false && (
                               <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-xs font-medium rounded">
-                                Expense{meeting.expense_payment_method ? ` (${meeting.expense_payment_method === 'personal' ? 'Personal' : 'Company'})` : ''}
+                                Expense{meeting.expense_payment_method ? ` (${meeting.expense_payment_method === 'personal' || meeting.expense_payment_method === 'Personal Card' ? 'Personal' : 'Company'})` : ''}
                               </span>
                             )}
                             {meeting.has_expense && meeting.is_primary_for_expense === false && (

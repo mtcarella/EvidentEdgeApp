@@ -426,6 +426,7 @@ export function FloatingChat() {
       .from('sales_people')
       .select('id, user_id, name, email, role, cell_phone')
       .eq('is_active', true)
+      .eq('chat_enabled', true)
       .order('name');
 
     if (data) {
@@ -1241,9 +1242,6 @@ export function FloatingChat() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-slate-900">{u.name}</span>
-                              <span className={`px-2 py-0.5 text-xs font-medium rounded ${roleBadgeColors[u.role] || 'bg-slate-100 text-slate-800'}`}>
-                                {roleLabels[u.role] || u.role}
-                              </span>
                               {outOfOfficeStatuses[u.user_id] && (() => {
                                 const statusInfo = getOOOStatusInfo(outOfOfficeStatuses[u.user_id]);
                                 const StatusIcon = statusInfo.icon;

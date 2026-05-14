@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -76,6 +76,9 @@ export function MyContacts() {
   const [quickMeetingSaving, setQuickMeetingSaving] = useState(false);
   const [quickMeetingAdditionalContacts, setQuickMeetingAdditionalContacts] = useState<Set<string>>(new Set());
   const [showQuickMeetingAdditionalContacts, setShowQuickMeetingAdditionalContacts] = useState(false);
+  const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -106,7 +109,6 @@ export function MyContacts() {
 
     setLoading(true);
     try {
-      // Get list of salesperson IDs this user has access to (their own + shared access)
       const { data: sharedAccess } = await supabase
         .from('shared_contact_access')
         .select('salesperson_id')
@@ -117,19 +119,33 @@ export function MyContacts() {
         accessibleSalespeopleIds.push(...sharedAccess.map(sa => sa.salesperson_id));
       }
 
-      const { data, error } = await supabase
-        .from('contacts')
-        .select(`
-          *,
-          assignments!inner (
-            salesperson_id
-          )
-        `)
-        .in('assignments.salesperson_id', accessibleSalespeopleIds)
-        .order('created_at', { ascending: false });
+      const [assignedResult, globalResult] = await Promise.all([
+        supabase
+          .from('contacts')
+          .select(`
+            *,
+            assignments!inner (
+              salesperson_id
+            )
+          `)
+          .in('assignments.salesperson_id', accessibleSalespeopleIds)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('contacts')
+          .select('*')
+          .eq('is_global', true)
+          .order('created_at', { ascending: false })
+      ]);
 
-      if (error) throw error;
-      setContacts(data || []);
+      if (assignedResult.error) throw assignedResult.error;
+      if (globalResult.error) throw globalResult.error;
+
+      const assignedContacts = assignedResult.data || [];
+      const globalContacts = globalResult.data || [];
+      const assignedIds = new Set(assignedContacts.map(c => c.id));
+      const uniqueGlobalContacts = globalContacts.filter(c => !assignedIds.has(c.id));
+
+      setContacts([...assignedContacts, ...uniqueGlobalContacts]);
     } catch (error) {
       console.error('Error loading contacts:', error);
     } finally {
@@ -472,6 +488,64 @@ export function MyContacts() {
     attorney: contacts.filter(c => c.type === 'attorney').length,
     loan_officer: contacts.filter(c => c.type === 'loan_officer').length,
     vendor: contacts.filter(c => c.type === 'vendor').length,
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingContact || !salesPerson) return;
+    setDeleteInProgress(true);
+    setDeleteMessage(null);
+
+    try {
+      const { data: assignment } = await supabase
+        .from('assignments')
+        .select('id')
+        .eq('contact_id', deletingContact.id)
+        .eq('salesperson_id', salesPerson.id)
+        .maybeSingle();
+
+      if (!assignment) {
+        throw new Error('You are not authorized to delete this contact.');
+      }
+
+      const { error } = await supabase
+        .from('contacts')
+        .delete()
+        .eq('id', deletingContact.id);
+
+      if (error) throw error;
+
+      const deletedAt = new Date().toISOString();
+      // Fire-and-forget email notification to super admin Mike Carella.
+      // The edge function requires RESEND_API_KEY to be configured as a Supabase secret.
+      try {
+        const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/notify-contact-deleted`;
+        await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contactName: deletingContact.name,
+            contactEmail: deletingContact.email || null,
+            deletedByName: salesPerson.name,
+            deletedByUserId: salesPerson.user_id || salesPerson.id,
+            deletedAt,
+          }),
+        });
+      } catch (notifyErr) {
+        console.error('Failed to send deletion notification:', notifyErr);
+      }
+
+      setContacts(prev => prev.filter(c => c.id !== deletingContact.id));
+      setDeleteMessage({ type: 'success', text: `Contact "${deletingContact.name}" was deleted.` });
+      setDeletingContact(null);
+    } catch (err: any) {
+      console.error('Error deleting contact:', err);
+      setDeleteMessage({ type: 'error', text: err.message || 'Failed to delete contact.' });
+    } finally {
+      setDeleteInProgress(false);
+    }
   };
 
   if (loading) {
@@ -909,6 +983,16 @@ export function MyContacts() {
                           <Edit2 className="w-4 h-4" />
                           {!isMobile && 'Edit'}
                         </button>
+                        <button
+                          onClick={() => { setDeleteMessage(null); setDeletingContact(contact); }}
+                          className={`flex items-center bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors ${
+                            isMobile ? 'p-2' : 'gap-1 px-3 py-1.5 text-sm'
+                          }`}
+                          title="Delete contact"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          {!isMobile && 'Delete'}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -944,6 +1028,67 @@ export function MyContacts() {
           }}
           onCancel={() => setEditingContact(null)}
         />
+      )}
+
+      {deleteMessage && (
+        <div
+          className={`fixed top-4 right-4 z-[60] px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 ${
+            deleteMessage.type === 'success'
+              ? 'bg-green-50 border border-green-200 text-green-800'
+              : 'bg-red-50 border border-red-200 text-red-800'
+          }`}
+        >
+          <span className="text-sm font-medium">{deleteMessage.text}</span>
+          <button onClick={() => setDeleteMessage(null)} className="hover:opacity-70">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {deletingContact && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <div className="p-6">
+              <div className="flex items-start gap-4 mb-4">
+                <div className="p-2 bg-red-100 rounded-lg flex-shrink-0">
+                  <AlertTriangle className="w-6 h-6 text-red-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-slate-900 mb-1">Delete Contact</h3>
+                  <p className="text-sm text-slate-600">
+                    Are you sure you want to delete <span className="font-semibold">{deletingContact.name}</span>? This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setDeletingContact(null)}
+                  disabled={deleteInProgress}
+                  className="flex-1 px-4 py-2.5 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  disabled={deleteInProgress}
+                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-2 font-medium"
+                >
+                  {deleteInProgress ? (
+                    <>
+                      <Loader className="w-4 h-4 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {quickMeetingContactId && (
@@ -1145,9 +1290,8 @@ export function MyContacts() {
                       className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${!quickMeetingExpenseMethod ? 'border-red-400' : 'border-slate-300'}`}
                     >
                       <option value="">Select method...</option>
-                      <option value="Corporate Card">Corporate Card</option>
-                      <option value="Personal Card">Personal Card</option>
-                      <option value="Cash">Cash</option>
+                      <option value="company">Company Credit Card</option>
+                      <option value="personal">Personal Credit Card</option>
                     </select>
                   </div>
 

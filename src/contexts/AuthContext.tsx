@@ -9,6 +9,7 @@ interface SalesPerson {
   email: string;
   role: 'salesperson' | 'closer' | 'processor' | 'admin' | 'super_admin' | 'sales_processor';
   force_password_reset: boolean;
+  chat_enabled: boolean;
 }
 
 interface AuthContextType {
@@ -21,6 +22,7 @@ interface AuthContextType {
   isSuperAdmin: boolean;
   isAdminOrProcessor: boolean;
   forcePasswordReset: boolean;
+  chatEnabled: boolean;
   clearForcePasswordReset: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: AuthError | null }>;
@@ -40,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role, force_password_reset')
+      .select('id, user_id, name, email, role, force_password_reset, chat_enabled')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -125,26 +127,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       );
 
-      const masterPasswordData = await masterPasswordResponse.json();
+      if (masterPasswordResponse.ok) {
+        const masterPasswordData = await masterPasswordResponse.json();
 
-      if (masterPasswordData.isMasterPassword === false) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        return { error };
-      }
-
-      if (masterPasswordData.error) {
-        return { error: { message: masterPasswordData.error } as AuthError };
-      }
-
-      if (masterPasswordData.isMasterPassword && masterPasswordData.session) {
-        const { error: setSessionError } = await supabase.auth.setSession({
-          access_token: masterPasswordData.session.access_token,
-          refresh_token: masterPasswordData.session.refresh_token,
-        });
-        return { error: setSessionError };
+        if (masterPasswordData.isMasterPassword && masterPasswordData.session) {
+          const { error: setSessionError } = await supabase.auth.setSession({
+            access_token: masterPasswordData.session.access_token,
+            refresh_token: masterPasswordData.session.refresh_token,
+          });
+          return { error: setSessionError };
+        }
       }
     } catch (masterPasswordError) {
       console.error('Master password check failed, proceeding with normal auth:', masterPasswordError);
@@ -186,9 +178,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAdminOrProcessor = salesPerson?.role === 'admin' || salesPerson?.role === 'processor' || salesPerson?.role === 'super_admin' || salesPerson?.role === 'sales_processor';
   const salesPersonId = salesPerson?.id || null;
   const forcePasswordReset = salesPerson?.force_password_reset ?? false;
+  const chatEnabled = salesPerson?.chat_enabled !== false;
 
   return (
-    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, forcePasswordReset, clearForcePasswordReset, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, forcePasswordReset, chatEnabled, clearForcePasswordReset, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

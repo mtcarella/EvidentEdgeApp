@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -29,8 +29,9 @@ import { SMSOptInManagement } from './SMSOptInManagement';
 import { ViewCommunications } from './ViewCommunications';
 import { UploadResource } from './UploadResource';
 import { DirectMessages } from './DirectMessages';
+import { YankeesTickets } from './YankeesTickets';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
@@ -268,6 +269,7 @@ export function Dashboard() {
     { id: 'meetings' as Tab, label: 'Meeting Logs', icon: Calendar, module: 'meeting_logs_report', color: 'text-orange-600' },
     { id: 'resources' as Tab, label: 'Resources', icon: FileText, module: 'resources', color: 'text-slate-600' },
     { id: 'direct-messages' as Tab, label: 'Direct Messages', icon: MessageCircle, module: 'direct_messages', color: 'text-blue-600' },
+    { id: 'yankees-tickets' as Tab, label: 'Yankees Tickets', icon: Ticket, module: 'yankees_tickets', color: 'text-slate-700' },
   ];
 
   // Administrative tabs that will be in the dropdown
@@ -708,6 +710,7 @@ export function Dashboard() {
         {activeTab === 'direct-messages' && hasAccess('direct_messages') && <DirectMessages />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
+        {activeTab === 'yankees-tickets' && <YankeesTickets />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

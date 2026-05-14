@@ -54,6 +54,7 @@ interface SalesPerson {
   birthday?: string | null;
   requires_daily_reports?: boolean;
   requires_weekly_reports?: boolean;
+  chat_enabled?: boolean;
 }
 
 type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions';
@@ -904,13 +905,9 @@ export function AdminPanel() {
         setLoading(true);
 
         const contactIds = Array.from(selectedContacts);
-        const { data: contacts } = await supabase
-          .from('contacts')
-          .select('*, assignments(salesperson_id, sales_person:sales_people(name))')
-          .in('id', contactIds)
-          .order('created_at', { ascending: false });
+        const selectedContactsData = contacts.filter(c => selectedContacts.has(c.id));
 
-        if (!contacts || contacts.length === 0) {
+        if (selectedContactsData.length === 0) {
           alert('No data to export');
           setLoading(false);
           return;
@@ -931,7 +928,7 @@ export function AdminPanel() {
           meetingsByContact.get(contactId)?.push(meeting);
         });
 
-        const worksheetData = contacts.map((contact: any) => {
+        const worksheetData = selectedContactsData.map((contact: any) => {
           const contactMeetings = meetingsByContact.get(contact.id) || [];
           const meetingsText = contactMeetings
             .map(m => `${m.meeting_date}: ${m.notes}`)
@@ -1658,6 +1655,7 @@ export function AdminPanel() {
                     )}
                   </button>
                 </th>
+                <th className="text-left py-3 px-4 font-semibold text-slate-700">Chat Feature</th>
                 <th className="text-right py-3 px-4 font-semibold text-slate-700">Actions</th>
               </tr>
             </thead>
@@ -1706,6 +1704,17 @@ export function AdminPanel() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
+                      <span
+                        className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                          person.chat_enabled !== false
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {person.chat_enabled !== false ? 'Yes' : 'No'}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
                       <div className="flex justify-end gap-2">
                         <button
                           onClick={() => startEdit(person)}
@@ -1745,7 +1754,7 @@ export function AdminPanel() {
                   </tr>
                   {editingId === person.id && editForm.id && (
                     <tr key={`${person.id}-edit`}>
-                      <td colSpan={6} className="p-0">
+                      <td colSpan={7} className="p-0">
                         <div className="bg-white">
                           <UserEditPanel
                             user={editForm as SalesPerson}

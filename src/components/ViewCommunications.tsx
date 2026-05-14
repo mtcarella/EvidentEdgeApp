@@ -528,6 +528,9 @@ export function ViewCommunications() {
                       <div className="flex-1">
                         <div className="font-medium text-gray-900">{u.name}</div>
                         <div className="text-sm text-gray-500">{u.email}</div>
+                        {u.cell_phone && (
+                          <div className="text-sm text-gray-400">{u.cell_phone}</div>
+                        )}
                       </div>
                     </label>
                   ))}

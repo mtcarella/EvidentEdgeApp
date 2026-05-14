@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,11 +9,12 @@ const corsHeaders = {
 
 interface SendCommunicationRequest {
   type: 'email' | 'sms';
-  recipients: Array<{
+  recipients?: Array<{
     name: string;
     email?: string;
     phone?: string;
   }>;
+  notifySuperAdmins?: boolean;
   subject?: string;
   message: string;
   senderName?: string;
@@ -29,9 +31,29 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { type, recipients, subject, message, senderName, senderEmail, sendCopyToSender = true }: SendCommunicationRequest = await req.json();
+    const { type, recipients: inputRecipients, notifySuperAdmins, subject, message, senderName, senderEmail, sendCopyToSender = true }: SendCommunicationRequest = await req.json();
 
-    if (!type || !recipients || !message) {
+    let recipients = inputRecipients ?? [];
+
+    if (notifySuperAdmins) {
+      const supabaseAdmin = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      );
+      const { data: admins } = await supabaseAdmin
+        .from("sales_people")
+        .select("name, email")
+        .eq("role", "super_admin")
+        .eq("is_active", true);
+      if (admins) {
+        recipients = [
+          ...recipients,
+          ...admins.filter((a: { name: string; email: string | null }) => a.email).map((a: { name: string; email: string | null }) => ({ name: a.name, email: a.email! })),
+        ];
+      }
+    }
+
+    if (!type || !recipients.length || !message) {
       return new Response(
         JSON.stringify({ error: 'Missing required fields' }),
         {

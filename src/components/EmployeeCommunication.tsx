@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Send, Users, Mail, MessageSquare, Plus, X, Edit2, Trash2, UserPlus, UserMinus, Search, Clock, AlertCircle } from 'lucide-react';
+import { Send, Users, Mail, MessageSquare, Plus, X, CreditCard as Edit2, Trash2, UserPlus, UserMinus, Search, Clock, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
@@ -30,6 +30,7 @@ interface GroupMember {
   added_at: string;
   user_name?: string;
   user_email?: string;
+  user_cell_phone?: string;
 }
 
 interface CommunicationLog {
@@ -158,14 +159,15 @@ export default function EmployeeCommunication() {
       (data || []).map(async (member) => {
         const { data: userData } = await supabase
           .from('sales_people')
-          .select('name, email')
+          .select('name, email, cell_phone')
           .eq('user_id', member.user_id)
           .maybeSingle();
 
         return {
           ...member,
           user_name: userData?.name || 'Unknown',
-          user_email: userData?.email || ''
+          user_email: userData?.email || '',
+          user_cell_phone: userData?.cell_phone || ''
         };
       })
     );
@@ -694,6 +696,9 @@ export default function EmployeeCommunication() {
                               <div>
                                 <div className="font-medium text-slate-800">{member.user_name}</div>
                                 <div className="text-sm text-slate-600">{member.user_email}</div>
+                                {member.user_cell_phone && (
+                                  <div className="text-sm text-slate-500">{member.user_cell_phone}</div>
+                                )}
                               </div>
                               <button
                                 onClick={() => handleRemoveMemberFromGroup(member.id)}

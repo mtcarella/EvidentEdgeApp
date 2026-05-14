@@ -213,6 +213,7 @@ export function AddProspect() {
       };
 
       let contact;
+      let isNewContact = false;
 
       if (existingContact) {
         // Update existing contact
@@ -238,6 +239,7 @@ export function AddProspect() {
 
         if (insertError) throw insertError;
         contact = newContact;
+        isNewContact = true;
       }
 
       if (contact) {
@@ -270,6 +272,32 @@ export function AddProspect() {
             });
 
           if (assignError) throw assignError;
+        }
+
+        if (isNewContact) {
+          const assignedSalesperson = isAdmin
+            ? salespeople.find(s => s.id === selectedSalesperson)?.name ?? 'Unknown'
+            : salesPerson?.name ?? 'Unknown';
+
+          const prospectName = [firstName, lastName].filter(Boolean).join(' ') || company || 'Unknown';
+
+          const typeLabels: Record<string, string> = {
+            buyer: 'Buyer',
+            realtor: 'Realtor',
+            attorney: 'Attorney',
+            loan_officer: 'Loan Officer',
+            vendor: 'Vendor',
+          };
+
+          supabase.functions.invoke('send-communication', {
+            body: {
+              type: 'email',
+              notifySuperAdmins: true,
+              subject: `New Prospect Added: ${prospectName}`,
+              message: `A new prospect has been added to the system.\n\nName: ${prospectName}\nType: ${typeLabels[type] ?? type}\nAssigned To: ${assignedSalesperson}\nAdded By: ${salesPerson?.name ?? user?.email ?? 'Unknown'}`,
+              sendCopyToSender: false,
+            },
+          }).catch((err: any) => console.error('Failed to send prospect notification:', err));
         }
       }
 

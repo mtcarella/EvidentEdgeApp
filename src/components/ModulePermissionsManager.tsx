@@ -44,6 +44,7 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
   { name: 'manage_announcements', label: 'Manage Announcements', description: 'Create and manage announcements' },
   { name: 'employee_communication', label: 'Office Communication', description: 'Send emails and texts to employees' },
+  { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
   { name: 'edit_admin_fields', label: 'Edit Admin Fields', description: 'Edit assignment, paralegal, preferred vendors, and processor notes', special: true },
 ];
 

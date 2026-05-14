@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { MessageCircle, Search, Send, ArrowLeft, Check, CheckCheck, Book, X, Mail, Phone, Users, UserPlus, Trash2, Clock, Coffee, Briefcase, Calendar, Palmtree, Settings, AlertCircle } from 'lucide-react';
+import { MessageCircle, Search, Send, ArrowLeft, Check, CheckCheck, Book, X, Mail, Phone, Users, UserPlus, Trash2, Clock, Coffee, Briefcase, Calendar, Palmtree, Settings, AlertCircle, Circle, MinusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -54,6 +54,12 @@ interface OutOfOfficeStatus {
   auto_disable: boolean;
 }
 
+interface UserPresence {
+  user_id: string;
+  status: 'online' | 'offline' | 'do_not_disturb';
+  last_seen: string;
+}
+
 type SidebarView = 'conversations' | 'phonebook';
 
 const roleLabels: Record<string, string> = {
@@ -84,7 +90,7 @@ const avatarColors: Record<string, string> = {
 };
 
 export function DirectMessages() {
-  const { user } = useAuth();
+  const { user, chatEnabled } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -118,6 +124,9 @@ export function DirectMessages() {
     auto_disable: true
   });
   const [savingOOO, setSavingOOO] = useState(false);
+  const [userPresence, setUserPresence] = useState<Record<string, UserPresence>>({});
+  const [myPresenceStatus, setMyPresenceStatus] = useState<'online' | 'do_not_disturb'>('online');
+  const presenceIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const quickSearchRef = useRef<HTMLInputElement>(null);
@@ -133,6 +142,25 @@ export function DirectMessages() {
     fetchUsers();
     fetchOutOfOfficeStatuses();
     fetchMyOOOStatus();
+    fetchUserPresence();
+
+    updateMyPresence('online');
+    presenceIntervalRef.current = setInterval(() => {
+      updateMyPresence(myPresenceStatus);
+    }, 30000);
+
+    const handleBeforeUnload = () => {
+      supabase.rpc('set_user_offline');
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      if (presenceIntervalRef.current) {
+        clearInterval(presenceIntervalRef.current);
+      }
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      supabase.rpc('set_user_offline');
+    };
   }, [user?.id]);
 
   useEffect(() => {
@@ -222,6 +250,27 @@ export function DirectMessages() {
       supabase.removeChannel(channel);
     };
   }, [user?.id, selectedConversation?.id, users]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('presence_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_presence'
+        },
+        () => {
+          fetchUserPresence();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     if (showQuickSearch && quickSearchRef.current) {
@@ -360,8 +409,9 @@ export function DirectMessages() {
   const fetchUsers = async () => {
     const { data, error } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role, cell_phone')
+      .select('id, user_id, name, email, role, cell_phone, chat_enabled')
       .eq('is_active', true)
+      .eq('chat_enabled', true)
       .order('name');
 
     if (!error && data) {
@@ -409,6 +459,54 @@ export function DirectMessages() {
         end_time: data.end_time ? new Date(data.end_time).toISOString().slice(0, 16) : '',
         auto_disable: data.auto_disable
       });
+    }
+  };
+
+  const fetchUserPresence = async () => {
+    const { data, error } = await supabase
+      .from('user_presence')
+      .select('*');
+
+    if (!error && data) {
+      const presenceMap: Record<string, UserPresence> = {};
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+
+      data.forEach(p => {
+        const lastSeen = new Date(p.last_seen);
+        const isStale = lastSeen < twoMinutesAgo;
+        presenceMap[p.user_id] = {
+          ...p,
+          status: isStale && p.status === 'online' ? 'offline' : p.status
+        };
+      });
+      setUserPresence(presenceMap);
+
+      const myPresence = data.find(p => p.user_id === user?.id);
+      if (myPresence && myPresence.status !== 'offline') {
+        setMyPresenceStatus(myPresence.status as 'online' | 'do_not_disturb');
+      }
+    }
+  };
+
+  const updateMyPresence = async (status: 'online' | 'do_not_disturb') => {
+    if (!user?.id) return;
+
+    await supabase.rpc('update_user_presence', { p_status: status });
+    setMyPresenceStatus(status);
+    fetchUserPresence();
+  };
+
+  const getPresenceIndicator = (userId: string) => {
+    const presence = userPresence[userId];
+    if (!presence) return { color: 'bg-slate-400', label: 'Offline', icon: Circle };
+
+    switch (presence.status) {
+      case 'online':
+        return { color: 'bg-green-500', label: 'Online', icon: Circle };
+      case 'do_not_disturb':
+        return { color: 'bg-red-500', label: 'Do Not Disturb', icon: MinusCircle };
+      default:
+        return { color: 'bg-slate-400', label: 'Offline', icon: Circle };
     }
   };
 
@@ -852,6 +950,22 @@ export function DirectMessages() {
 
   const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
 
+  if (!chatEnabled) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-[calc(100vh-280px)] min-h-[500px] flex items-center justify-center">
+        <div className="text-center p-8 max-w-md">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-100 flex items-center justify-center">
+            <MessageCircle className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-xl font-semibold text-slate-900 mb-2">Chat Feature Disabled</h3>
+          <p className="text-slate-500">
+            The messaging feature is currently not available for your account. Please contact an administrator if you believe this is an error.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-[calc(100vh-280px)] min-h-[500px] relative">
       {notifications.map((notification, index) => (
@@ -905,6 +1019,17 @@ export function DirectMessages() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => updateMyPresence(myPresenceStatus === 'do_not_disturb' ? 'online' : 'do_not_disturb')}
+                  className={`p-2 rounded-lg transition-all ${
+                    myPresenceStatus === 'do_not_disturb'
+                      ? 'text-red-700 bg-red-100 hover:bg-red-200'
+                      : 'text-slate-500 hover:text-red-600 hover:bg-red-50'
+                  }`}
+                  title={myPresenceStatus === 'do_not_disturb' ? 'Turn off Do Not Disturb' : 'Turn on Do Not Disturb'}
+                >
+                  <MinusCircle className="w-5 h-5" />
+                </button>
                 <button
                   onClick={() => setShowOOOSettings(true)}
                   className={`p-2 rounded-lg transition-all ${
@@ -965,17 +1090,31 @@ export function DirectMessages() {
               </div>
             </div>
 
-            {myOOOStatus?.is_enabled && (
-              <div
-                className={`mt-3 p-2 rounded-lg border flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity ${getOOOStatusInfo(myOOOStatus).color}`}
-                onClick={() => setShowOOOSettings(true)}
-              >
-                {(() => {
-                  const StatusIcon = getOOOStatusInfo(myOOOStatus).icon;
-                  return <StatusIcon className="w-4 h-4" />;
-                })()}
-                <span className="text-xs font-medium flex-1">You are: {getOOOStatusInfo(myOOOStatus).label}</span>
-                <Settings className="w-3.5 h-3.5 opacity-60" />
+            {(myPresenceStatus === 'do_not_disturb' || myOOOStatus?.is_enabled) && (
+              <div className="mt-3 flex flex-col gap-2">
+                {myPresenceStatus === 'do_not_disturb' && (
+                  <div
+                    className="p-2 rounded-lg border flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity bg-red-50 text-red-800 border-red-200"
+                    onClick={() => updateMyPresence('online')}
+                  >
+                    <MinusCircle className="w-4 h-4" />
+                    <span className="text-xs font-medium flex-1">Do Not Disturb is on</span>
+                    <X className="w-3.5 h-3.5 opacity-60" />
+                  </div>
+                )}
+                {myOOOStatus?.is_enabled && (
+                  <div
+                    className={`p-2 rounded-lg border flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity ${getOOOStatusInfo(myOOOStatus).color}`}
+                    onClick={() => setShowOOOSettings(true)}
+                  >
+                    {(() => {
+                      const StatusIcon = getOOOStatusInfo(myOOOStatus).icon;
+                      return <StatusIcon className="w-4 h-4" />;
+                    })()}
+                    <span className="text-xs font-medium flex-1">You are: {getOOOStatusInfo(myOOOStatus).label}</span>
+                    <Settings className="w-3.5 h-3.5 opacity-60" />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1049,15 +1188,20 @@ export function DirectMessages() {
                           onClick={() => setSelectedConversation(conv)}
                           className="flex items-start gap-3 flex-1 min-w-0 text-left"
                         >
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold flex-shrink-0 ${
-                            conv.is_group
-                              ? 'bg-gradient-to-br from-emerald-500 to-emerald-600'
-                              : 'bg-gradient-to-br from-blue-500 to-blue-600'
-                          }`}>
-                            {conv.is_group ? (
-                              <Users className="w-5 h-5" />
-                            ) : (
-                              conv.other_user_name.charAt(0).toUpperCase()
+                          <div className="relative flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold ${
+                              conv.is_group
+                                ? 'bg-gradient-to-br from-emerald-500 to-emerald-600'
+                                : 'bg-gradient-to-br from-blue-500 to-blue-600'
+                            }`}>
+                              {conv.is_group ? (
+                                <Users className="w-5 h-5" />
+                              ) : (
+                                conv.other_user_name.charAt(0).toUpperCase()
+                              )}
+                            </div>
+                            {!conv.is_group && (
+                              <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getPresenceIndicator(conv.other_user_id).color}`} title={getPresenceIndicator(conv.other_user_id).label} />
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -1137,15 +1281,15 @@ export function DirectMessages() {
                                 {isSelected && <Check className="w-4 h-4 text-white" />}
                               </div>
                             )}
-                            <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${avatarColors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-semibold text-lg flex-shrink-0`}>
-                              {u.name.charAt(0).toUpperCase()}
+                            <div className="relative flex-shrink-0">
+                              <div className={`w-12 h-12 rounded-full bg-gradient-to-br ${avatarColors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-semibold text-lg`}>
+                                {u.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white ${getPresenceIndicator(u.user_id).color}`} title={getPresenceIndicator(u.user_id).label} />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-semibold text-slate-900">{u.name}</span>
-                                <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${roleColors[u.role] || 'bg-slate-100 text-slate-800'}`}>
-                                  {roleLabels[u.role] || u.role}
-                                </span>
                                 {outOfOfficeStatuses[u.user_id] && (() => {
                                   const statusInfo = getOOOStatusInfo(outOfOfficeStatuses[u.user_id]);
                                   const StatusIcon = statusInfo.icon;
@@ -1250,15 +1394,20 @@ export function DirectMessages() {
                 >
                   <ArrowLeft className="w-5 h-5 text-slate-600" />
                 </button>
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold ${
-                  selectedConversation.is_group
-                    ? 'bg-gradient-to-br from-emerald-500 to-emerald-600'
-                    : 'bg-gradient-to-br from-blue-500 to-blue-600'
-                }`}>
-                  {selectedConversation.is_group ? (
-                    <Users className="w-5 h-5" />
-                  ) : (
-                    selectedConversation.other_user_name.charAt(0).toUpperCase()
+                <div className="relative">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold ${
+                    selectedConversation.is_group
+                      ? 'bg-gradient-to-br from-emerald-500 to-emerald-600'
+                      : 'bg-gradient-to-br from-blue-500 to-blue-600'
+                  }`}>
+                    {selectedConversation.is_group ? (
+                      <Users className="w-5 h-5" />
+                    ) : (
+                      selectedConversation.other_user_name.charAt(0).toUpperCase()
+                    )}
+                  </div>
+                  {!selectedConversation.is_group && (
+                    <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getPresenceIndicator(selectedConversation.other_user_id).color}`} title={getPresenceIndicator(selectedConversation.other_user_id).label} />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1459,16 +1608,14 @@ export function DirectMessages() {
                           onClick={() => startConversation(u.user_id)}
                           className="w-full p-3 flex items-center gap-3 hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-b-0 text-left"
                         >
-                          <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${avatarColors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-semibold flex-shrink-0`}>
-                            {u.name.charAt(0).toUpperCase()}
+                          <div className="relative flex-shrink-0">
+                            <div className={`w-10 h-10 rounded-full bg-gradient-to-br ${avatarColors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-semibold`}>
+                              {u.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white ${getPresenceIndicator(u.user_id).color}`} title={getPresenceIndicator(u.user_id).label} />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium text-slate-900">{u.name}</span>
-                              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${roleColors[u.role] || 'bg-slate-100 text-slate-800'}`}>
-                                {roleLabels[u.role] || u.role}
-                              </span>
-                            </div>
+                            <span className="font-medium text-slate-900">{u.name}</span>
                             <p className="text-sm text-slate-500 truncate">{u.email}</p>
                           </div>
                           <MessageCircle className="w-5 h-5 text-blue-600 flex-shrink-0" />
