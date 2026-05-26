@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { FileText, Download, Calendar, Filter, Trash2, Edit2, X, Save, CheckSquare, Square, Eye } from 'lucide-react';
+import { FileText, Download, Calendar, Filter, Trash2, CreditCard as Edit2, X, Save, CheckSquare, Square, Eye } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import * as XLSX from 'xlsx';
 import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString } from '../lib/dateUtils';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -84,6 +85,7 @@ type WeeklyReport = ParalegalReport | RecordingReport | TitleReport | DailyRepor
 export default function WeeklyReportsView() {
   const { user, isAdmin, isSuperAdmin, salesPersonId } = useAuth();
   const { hasAccess, loading: permissionsLoading, permissions } = useModulePermissions(user?.id, salesPersonId);
+  const dialog = useDialog();
   const [reports, setReports] = useState<WeeklyReport[]>([]);
   const [filteredReports, setFilteredReports] = useState<WeeklyReport[]>([]);
   const [loading, setLoading] = useState(true);
@@ -219,7 +221,7 @@ export default function WeeklyReportsView() {
   const isAllSelected = filteredReports.length > 0 && selectedReportIds.size === filteredReports.length;
 
   const handleDelete = async (reportId: string) => {
-    if (!confirm('Are you sure you want to delete this report?')) return;
+    if (!(await dialog.confirm('Are you sure you want to delete this report?'))) return;
 
     try {
       const { error } = await supabase
@@ -232,7 +234,7 @@ export default function WeeklyReportsView() {
       setReports(reports.filter(r => r.id !== reportId));
     } catch (error) {
       console.error('Error deleting report:', error);
-      alert('Failed to delete report');
+      await dialog.alert('Failed to delete report');
     }
   };
 
@@ -277,10 +279,10 @@ export default function WeeklyReportsView() {
       setReports(updatedReports);
       setEditingReport(null);
       setEditFormData({});
-      alert('Report updated successfully!');
+      await dialog.alert('Report updated successfully!');
     } catch (error) {
       console.error('Error updating report:', error);
-      alert('Failed to update report');
+      await dialog.alert('Failed to update report');
     }
   };
 
@@ -288,11 +290,11 @@ export default function WeeklyReportsView() {
     return currentProcessorId === report.processor_id || isAdmin;
   };
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     const reportsToExport = filteredReports.filter(report => selectedReportIds.has(report.id));
 
     if (reportsToExport.length === 0) {
-      alert('Please select at least one report to export');
+      await dialog.alert('Please select at least one report to export');
       return;
     }
 

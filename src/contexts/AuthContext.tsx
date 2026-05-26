@@ -10,6 +10,10 @@ interface SalesPerson {
   role: 'salesperson' | 'closer' | 'processor' | 'admin' | 'super_admin' | 'sales_processor';
   force_password_reset: boolean;
   chat_enabled: boolean;
+  budget: number;
+  budget_display_enabled: boolean;
+  budget_edit_enabled: boolean;
+  file_viewer_enabled: boolean;
 }
 
 interface AuthContextType {
@@ -24,6 +28,7 @@ interface AuthContextType {
   forcePasswordReset: boolean;
   chatEnabled: boolean;
   clearForcePasswordReset: () => Promise<void>;
+  refreshSalesPerson: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
@@ -42,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role, force_password_reset, chat_enabled')
+      .select('id, user_id, name, email, role, force_password_reset, chat_enabled, budget, budget_display_enabled, budget_edit_enabled, friends_family_enabled, file_viewer_enabled')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -173,6 +178,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
   };
 
+  const refreshSalesPerson = async () => {
+    if (user) {
+      await fetchSalesPerson(user.id);
+    }
+  };
+
   const isAdmin = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
   const isSuperAdmin = salesPerson?.role === 'super_admin';
   const isAdminOrProcessor = salesPerson?.role === 'admin' || salesPerson?.role === 'processor' || salesPerson?.role === 'super_admin' || salesPerson?.role === 'sales_processor';
@@ -181,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const chatEnabled = salesPerson?.chat_enabled !== false;
 
   return (
-    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, forcePasswordReset, chatEnabled, clearForcePasswordReset, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, userProfile: salesPerson, salesPerson, salesPersonId, loading, isAdmin, isSuperAdmin, isAdminOrProcessor, forcePasswordReset, chatEnabled, clearForcePasswordReset, refreshSalesPerson, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );

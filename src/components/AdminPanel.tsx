@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail } from 'lucide-react';
+import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { useModulePermissions } from '../hooks/useModulePermissions';
+import { SystemSettingsPanel } from './SystemSettingsPanel';
 import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { ContactView } from './ContactView';
@@ -55,17 +57,20 @@ interface SalesPerson {
   requires_daily_reports?: boolean;
   requires_weekly_reports?: boolean;
   chat_enabled?: boolean;
+  friends_family_enabled?: boolean;
+  file_viewer_enabled?: boolean;
 }
 
-type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions';
+type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions' | 'system_settings';
 
 type SortField = 'name' | 'type' | 'email' | 'phone' | 'company' | 'salesperson' | 'evident_paralegal';
 type SortDirection = 'asc' | 'desc' | null;
 type UserSortField = 'name' | 'email' | 'role' | 'is_active';
 
 export function AdminPanel() {
-  const { isAdminOrProcessor, isAdmin, user, salesPersonId } = useAuth();
+  const { isAdminOrProcessor, isAdmin, isSuperAdmin, user, salesPersonId } = useAuth();
   const { hasAccess } = useModulePermissions(user?.id, salesPersonId);
+  const dialog = useDialog();
   const [viewMode, setViewMode] = useState<ViewMode>('contacts');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
@@ -97,6 +102,7 @@ export function AdminPanel() {
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [searchingDuplicates, setSearchingDuplicates] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [filterBySalesperson, setFilterBySalesperson] = useState<string>('');
   const [filterByType, setFilterByType] = useState<string>('');
   const [filterByEvidentParalegal, setFilterByEvidentParalegal] = useState<string>('');
@@ -227,13 +233,13 @@ export function AdminPanel() {
 
         if (error) {
           console.error('Error updating contact:', error);
-          alert(`Failed to update contact: ${error.message}`);
+          await dialog.alert(`Failed to update contact: ${error.message}`);
           return;
         }
 
         if (!data || data.length === 0) {
           console.error('No rows updated - possibly due to RLS policy restriction');
-          alert('Failed to update: You may not have permission to modify this contact.');
+          await dialog.alert('Failed to update: You may not have permission to modify this contact.');
           return;
         }
 
@@ -260,7 +266,7 @@ export function AdminPanel() {
 
               if (updateError) {
                 console.error('Error updating assignment:', updateError);
-                alert(`Failed to update assignment: ${updateError.message}`);
+                await dialog.alert(`Failed to update assignment: ${updateError.message}`);
                 return;
               }
             } else {
@@ -274,7 +280,7 @@ export function AdminPanel() {
 
               if (insertError) {
                 console.error('Error creating assignment:', insertError);
-                alert(`Failed to create assignment: ${insertError.message}`);
+                await dialog.alert(`Failed to create assignment: ${insertError.message}`);
                 return;
               }
             }
@@ -286,7 +292,7 @@ export function AdminPanel() {
 
             if (deleteError) {
               console.error('Error deleting assignment:', deleteError);
-              alert(`Failed to delete assignment: ${deleteError.message}`);
+              await dialog.alert(`Failed to delete assignment: ${deleteError.message}`);
               return;
             }
           }
@@ -311,13 +317,13 @@ export function AdminPanel() {
 
         if (error) {
           console.error('Error updating salesperson:', error);
-          alert(`Failed to update: ${error.message}`);
+          await dialog.alert(`Failed to update: ${error.message}`);
           return;
         }
 
         if (!data || data.length === 0) {
           console.error('No rows updated - possibly due to RLS policy restriction');
-          alert('Failed to update: You may not have permission to modify this user.');
+          await dialog.alert('Failed to update: You may not have permission to modify this user.');
           return;
         }
 
@@ -328,27 +334,27 @@ export function AdminPanel() {
       loadData();
     } catch (error) {
       console.error('Error saving:', error);
-      alert(`An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      await dialog.alert(`An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
   const deleteItem = async (id: string) => {
     if (viewMode === 'contacts') {
-      if (!window.confirm('Are you sure you want to delete this contact?')) return;
+      if (!(await dialog.confirm('Are you sure you want to delete this contact?'))) return;
       try {
         setLoading(true);
         const { error } = await supabase.from('contacts').delete().eq('id', id);
         if (error) throw error;
-        alert('Contact deleted successfully');
+        await dialog.alert('Contact deleted successfully');
         loadData();
       } catch (error) {
         console.error('Error deleting contact:', error);
-        alert(`Failed to delete contact: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        await dialog.alert(`Failed to delete contact: ${error instanceof Error ? error.message : 'Unknown error'}`);
       } finally {
         setLoading(false);
       }
     } else if (viewMode === 'salespeople') {
-      if (!window.confirm('Are you sure you want to deactivate this user? They will no longer be able to log in.')) return;
+      if (!(await dialog.confirm('Are you sure you want to deactivate this user? They will no longer be able to log in.'))) return;
       try {
         setLoading(true);
         const person = salesPeople.find(p => p.id === id);
@@ -361,11 +367,11 @@ export function AdminPanel() {
             .eq('id', id);
           if (error) throw error;
         }
-        alert('User deactivated successfully');
+        await dialog.alert('User deactivated successfully');
         loadData();
       } catch (error) {
         console.error('Error deactivating user:', error);
-        alert(`Failed to deactivate user: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        await dialog.alert(`Failed to deactivate user: ${error instanceof Error ? error.message : 'Unknown error'}`);
       } finally {
         setLoading(false);
       }
@@ -375,11 +381,11 @@ export function AdminPanel() {
   const permanentlyDeleteUser = async (id: string) => {
     const person = salesPeople.find(p => p.id === id);
     if (!person?.user_id) {
-      alert('This user has no auth account to delete');
+      await dialog.alert('This user has no auth account to delete');
       return;
     }
 
-    if (!window.confirm('Are you sure you want to PERMANENTLY delete this user? This cannot be undone and will allow the email to be reused.')) return;
+    if (!(await dialog.confirm('Are you sure you want to PERMANENTLY delete this user? This cannot be undone and will allow the email to be reused.'))) return;
 
     try {
       setLoading(true);
@@ -402,11 +408,11 @@ export function AdminPanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to delete user');
 
-      alert('User permanently deleted successfully');
+      await dialog.alert('User permanently deleted successfully');
       loadData();
     } catch (error: any) {
       console.error('Error deleting user:', error);
-      alert(`Failed to delete user: ${error.message}`);
+      await dialog.alert(`Failed to delete user: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -415,15 +421,15 @@ export function AdminPanel() {
   const resetPassword = async (id: string) => {
     const person = salesPeople.find(p => p.id === id);
     if (!person?.user_id) {
-      alert('This user has no auth account');
+      await dialog.alert('This user has no auth account');
       return;
     }
 
-    const newPassword = prompt('Enter new password (minimum 6 characters):');
+    const newPassword = await dialog.prompt('Enter new password (minimum 6 characters):', '');
     if (!newPassword) return;
 
     if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters');
+      await dialog.alert('Password must be at least 6 characters');
       return;
     }
 
@@ -454,10 +460,10 @@ export function AdminPanel() {
 
       if (!response.ok) throw new Error(result.error || 'Failed to reset password');
 
-      alert('Password reset successfully');
+      await dialog.alert('Password reset successfully');
     } catch (error: any) {
       console.error('Error resetting password:', error);
-      alert(`Failed to reset password: ${error.message}`);
+      await dialog.alert(`Failed to reset password: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -465,12 +471,12 @@ export function AdminPanel() {
 
   const addNewUser = async () => {
     if (!newUserForm.name || !newUserForm.email || !newUserForm.password) {
-      alert('Please fill in all fields');
+      await dialog.alert('Please fill in all fields');
       return;
     }
 
     if (newUserForm.password.length < 6) {
-      alert('Password must be at least 6 characters');
+      await dialog.alert('Password must be at least 6 characters');
       return;
     }
 
@@ -501,7 +507,7 @@ export function AdminPanel() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to create user');
 
-      alert('User created successfully');
+      await dialog.alert('User created successfully');
       setShowAddUserForm(false);
       setNewUserForm({
         name: '',
@@ -512,7 +518,7 @@ export function AdminPanel() {
       loadData();
     } catch (error: any) {
       console.error('Error creating user:', error);
-      alert(`Failed to create user: ${error.message}`);
+      await dialog.alert(`Failed to create user: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -554,9 +560,9 @@ export function AdminPanel() {
     }
   };
 
-  const startBatchAssign = () => {
+  const startBatchAssign = async () => {
     if (selectedContacts.size === 0) {
-      alert('Please select at least one contact');
+      await dialog.alert('Please select at least one contact');
       return;
     }
     setBatchAssignMode(true);
@@ -573,11 +579,11 @@ export function AdminPanel() {
 
   const batchDeleteContacts = async () => {
     if (selectedContacts.size === 0) {
-      alert('Please select at least one contact');
+      await dialog.alert('Please select at least one contact');
       return;
     }
 
-    if (!confirm(`Are you sure you want to delete ${selectedContacts.size} contact(s)? This action cannot be undone.`)) {
+    if (!(await dialog.confirm(`Are you sure you want to delete ${selectedContacts.size} contact(s)? This action cannot be undone.`))) {
       return;
     }
 
@@ -587,12 +593,12 @@ export function AdminPanel() {
         await supabase.from('contacts').delete().eq('id', contactId);
       }
 
-      alert(`Successfully deleted ${selectedContacts.size} contact(s)`);
+      await dialog.alert(`Successfully deleted ${selectedContacts.size} contact(s)`);
       setSelectedContacts(new Set());
       loadData();
     } catch (error) {
       console.error('Error deleting contacts:', error);
-      alert('Failed to delete contacts');
+      await dialog.alert('Failed to delete contacts');
     } finally {
       setLoading(false);
     }
@@ -606,7 +612,7 @@ export function AdminPanel() {
       setDuplicateGroups(groups);
     } catch (error) {
       console.error('Error finding duplicates:', error);
-      alert('Failed to search for duplicates');
+      await dialog.alert('Failed to search for duplicates');
     } finally {
       setSearchingDuplicates(false);
     }
@@ -619,7 +625,7 @@ export function AdminPanel() {
 
   const applyBatchAssign = async () => {
     if (!batchSalespersonId && !batchParalegalId && !batchClientType && !batchBranch && !batchGrade) {
-      alert('Please select at least one field to update');
+      await dialog.alert('Please select at least one field to update');
       return;
     }
 
@@ -679,7 +685,7 @@ export function AdminPanel() {
         }
       }
 
-      alert(`Successfully updated ${selectedContacts.size} contact(s)`);
+      await dialog.alert(`Successfully updated ${selectedContacts.size} contact(s)`);
       setSelectedContacts(new Set());
       setBatchAssignMode(false);
       setBatchSalespersonId('');
@@ -690,7 +696,7 @@ export function AdminPanel() {
       loadData();
     } catch (error) {
       console.error('Error applying batch assignment:', error);
-      alert('Failed to assign contacts');
+      await dialog.alert('Failed to assign contacts');
     } finally {
       setLoading(false);
     }
@@ -698,11 +704,11 @@ export function AdminPanel() {
 
   const reformatSelectedContacts = async () => {
     if (selectedContacts.size === 0) {
-      alert('Please select at least one contact to format');
+      await dialog.alert('Please select at least one contact to format');
       return;
     }
 
-    if (!confirm(`This will reformat phone numbers and addresses for ${selectedContacts.size} selected contact(s). Continue?`)) {
+    if (!(await dialog.confirm(`This will reformat phone numbers and addresses for ${selectedContacts.size} selected contact(s). Continue?`))) {
       return;
     }
 
@@ -762,11 +768,11 @@ export function AdminPanel() {
         }
       }
 
-      alert(`Formatting complete!\nUpdated: ${updated}\nFailed: ${failed}`);
+      await dialog.alert(`Formatting complete!\nUpdated: ${updated}\nFailed: ${failed}`);
       loadData();
     } catch (error) {
       console.error('Error reformatting contacts:', error);
-      alert('Failed to reformat contacts');
+      await dialog.alert('Failed to reformat contacts');
     } finally {
       setLoading(false);
     }
@@ -898,7 +904,7 @@ export function AdminPanel() {
 
       if (viewMode === 'contacts') {
         if (selectedContacts.size === 0) {
-          alert('Please select at least one contact to export');
+          await dialog.alert('Please select at least one contact to export');
           return;
         }
 
@@ -908,7 +914,7 @@ export function AdminPanel() {
         const selectedContactsData = contacts.filter(c => selectedContacts.has(c.id));
 
         if (selectedContactsData.length === 0) {
-          alert('No data to export');
+          await dialog.alert('No data to export');
           setLoading(false);
           return;
         }
@@ -964,7 +970,7 @@ export function AdminPanel() {
           .order('name');
 
         if (!data || data.length === 0) {
-          alert('No data to export');
+          await dialog.alert('No data to export');
           return;
         }
 
@@ -985,7 +991,7 @@ export function AdminPanel() {
       }
     } catch (error) {
       console.error('Error exporting CSV:', error);
-      alert('Error exporting data');
+      await dialog.alert('Error exporting data');
     }
   };
 
@@ -1042,6 +1048,25 @@ export function AdminPanel() {
             <div className="flex items-center gap-2">
               <Shield className="w-4 h-4" />
               Module Permissions
+            </div>
+          </button>
+        )}
+        {isSuperAdmin && (
+          <button
+            onClick={() => {
+              setViewMode('system_settings');
+              setEditingId(null);
+              setEditForm({});
+            }}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              viewMode === 'system_settings'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4" />
+              System Settings
             </div>
           </button>
         )}
@@ -1500,6 +1525,10 @@ export function AdminPanel() {
         <ModulePermissionsManager />
       )}
 
+      {viewMode === 'system_settings' && isSuperAdmin && (
+        <SystemSettingsPanel />
+      )}
+
       {viewMode === 'salespeople' && (
         <div className="space-y-4">
           {showAddUserForm && (
@@ -1595,6 +1624,104 @@ export function AdminPanel() {
             </div>
           )}
 
+          {/* Bulk Friends & Family Actions */}
+          <div className="flex items-center gap-3 mb-3 flex-wrap">
+            <button
+              onClick={() => {
+                if (selectedUsers.size === sortedSalesPeople.length && sortedSalesPeople.length > 0) {
+                  setSelectedUsers(new Set());
+                } else {
+                  setSelectedUsers(new Set(sortedSalesPeople.map(p => p.id)));
+                }
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors text-sm font-medium"
+            >
+              {selectedUsers.size === sortedSalesPeople.length && sortedSalesPeople.length > 0 ? (
+                <CheckSquare className="w-4 h-4 text-blue-600" />
+              ) : (
+                <Square className="w-4 h-4 text-slate-400" />
+              )}
+              Select All ({sortedSalesPeople.length})
+            </button>
+            {selectedUsers.size > 0 && (
+              <>
+                <span className="text-sm text-slate-500">{selectedUsers.size} selected</span>
+                <button
+                  onClick={async () => {
+                    const confirmed = await dialog.confirm(`Enable Friends & Family for ${selectedUsers.size} user(s)?`);
+                    if (!confirmed) return;
+                    const { error } = await supabase
+                      .from('sales_people')
+                      .update({ friends_family_enabled: true })
+                      .in('id', Array.from(selectedUsers));
+                    if (!error) {
+                      setSalesPeople(prev => prev.map(p => selectedUsers.has(p.id) ? { ...p, friends_family_enabled: true } : p));
+                      setSelectedUsers(new Set());
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <Users className="w-4 h-4" />
+                  Enable F&F
+                </button>
+                <button
+                  onClick={async () => {
+                    const confirmed = await dialog.confirm(`Disable Friends & Family for ${selectedUsers.size} user(s)?`);
+                    if (!confirmed) return;
+                    const { error } = await supabase
+                      .from('sales_people')
+                      .update({ friends_family_enabled: false })
+                      .in('id', Array.from(selectedUsers));
+                    if (!error) {
+                      setSalesPeople(prev => prev.map(p => selectedUsers.has(p.id) ? { ...p, friends_family_enabled: false } : p));
+                      setSelectedUsers(new Set());
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <UserX className="w-4 h-4" />
+                  Disable F&F
+                </button>
+                <button
+                  onClick={async () => {
+                    const confirmed = await dialog.confirm(`Enable File Viewer for ${selectedUsers.size} user(s)?`);
+                    if (!confirmed) return;
+                    const { error } = await supabase
+                      .from('sales_people')
+                      .update({ file_viewer_enabled: true })
+                      .in('id', Array.from(selectedUsers));
+                    if (!error) {
+                      setSalesPeople(prev => prev.map(p => selectedUsers.has(p.id) ? { ...p, file_viewer_enabled: true } : p));
+                      setSelectedUsers(new Set());
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <FileText className="w-4 h-4" />
+                  Enable File Viewer
+                </button>
+                <button
+                  onClick={async () => {
+                    const confirmed = await dialog.confirm(`Disable File Viewer for ${selectedUsers.size} user(s)?`);
+                    if (!confirmed) return;
+                    const { error } = await supabase
+                      .from('sales_people')
+                      .update({ file_viewer_enabled: false })
+                      .in('id', Array.from(selectedUsers));
+                    if (!error) {
+                      setSalesPeople(prev => prev.map(p => selectedUsers.has(p.id) ? { ...p, file_viewer_enabled: false } : p));
+                      setSelectedUsers(new Set());
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-600 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5"
+                >
+                  <FileText className="w-4 h-4" />
+                  Disable File Viewer
+                </button>
+              </>
+            )}
+          </div>
+
           <div className="overflow-x-auto border-t-2 border-slate-200" style={{ overflowX: 'auto', scrollbarWidth: 'thin', height: '20px' }} onScroll={(e) => {
             const target = e.currentTarget;
             const bottomScroll = target.nextElementSibling as HTMLElement;
@@ -1610,6 +1737,20 @@ export function AdminPanel() {
             <table className="w-full" style={{ minWidth: '1000px' }}>
             <thead>
               <tr className="border-b border-slate-200">
+                <th className="py-3 px-2 w-8">
+                  <button
+                    onClick={() => {
+                      if (selectedUsers.size === sortedSalesPeople.length) setSelectedUsers(new Set());
+                      else setSelectedUsers(new Set(sortedSalesPeople.map(p => p.id)));
+                    }}
+                  >
+                    {selectedUsers.size === sortedSalesPeople.length && sortedSalesPeople.length > 0 ? (
+                      <CheckSquare className="w-4 h-4 text-blue-600" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-400" />
+                    )}
+                  </button>
+                </th>
                 <th className="text-left py-3 px-4 font-semibold text-slate-700">
                   <button
                     onClick={() => handleUserSort('name')}
@@ -1656,6 +1797,8 @@ export function AdminPanel() {
                   </button>
                 </th>
                 <th className="text-left py-3 px-4 font-semibold text-slate-700">Chat Feature</th>
+                <th className="text-left py-3 px-4 font-semibold text-slate-700">Friends & Family</th>
+                <th className="text-left py-3 px-4 font-semibold text-slate-700">File Viewer</th>
                 <th className="text-right py-3 px-4 font-semibold text-slate-700">Actions</th>
               </tr>
             </thead>
@@ -1663,6 +1806,20 @@ export function AdminPanel() {
               {sortedSalesPeople.map((person) => (
                 <>
                   <tr key={person.id} className={`border-b border-slate-100 hover:bg-slate-50 ${editingId === person.id ? 'bg-blue-50' : ''}`}>
+                    <td className="py-3 px-2 w-8">
+                      <button onClick={() => {
+                        const next = new Set(selectedUsers);
+                        if (next.has(person.id)) next.delete(person.id);
+                        else next.add(person.id);
+                        setSelectedUsers(next);
+                      }}>
+                        {selectedUsers.has(person.id) ? (
+                          <CheckSquare className="w-4 h-4 text-blue-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-400" />
+                        )}
+                      </button>
+                    </td>
                     <td className="py-3 px-4 font-medium text-slate-900">{person.name}</td>
                     <td className="py-3 px-4 text-slate-600">{person.email}</td>
                     <td className="py-3 px-4">
@@ -1704,15 +1861,76 @@ export function AdminPanel() {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      <span
-                        className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
-                          person.chat_enabled !== false
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-red-100 text-red-800'
+                      <button
+                        onClick={async () => {
+                          const newValue = person.chat_enabled === false ? true : false;
+                          const { error } = await supabase
+                            .from('sales_people')
+                            .update({ chat_enabled: newValue })
+                            .eq('id', person.id);
+                          if (!error) {
+                            setSalesPeople(prev => prev.map(p => p.id === person.id ? { ...p, chat_enabled: newValue } : p));
+                          }
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          person.chat_enabled !== false ? 'bg-green-500' : 'bg-slate-300'
                         }`}
+                        title={person.chat_enabled !== false ? 'Disable chat' : 'Enable chat'}
                       >
-                        {person.chat_enabled !== false ? 'Yes' : 'No'}
-                      </span>
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow ${
+                            person.chat_enabled !== false ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </td>
+                    <td className="py-3 px-4">
+                      <button
+                        onClick={async () => {
+                          const newValue = !person.friends_family_enabled;
+                          const { error } = await supabase
+                            .from('sales_people')
+                            .update({ friends_family_enabled: newValue })
+                            .eq('id', person.id);
+                          if (!error) {
+                            setSalesPeople(prev => prev.map(p => p.id === person.id ? { ...p, friends_family_enabled: newValue } : p));
+                          }
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          person.friends_family_enabled ? 'bg-cyan-500' : 'bg-slate-300'
+                        }`}
+                        title={person.friends_family_enabled ? 'Disable Friends & Family' : 'Enable Friends & Family'}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow ${
+                            person.friends_family_enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </td>
+                    <td className="py-3 px-4">
+                      <button
+                        onClick={async () => {
+                          const newValue = !person.file_viewer_enabled;
+                          const { error } = await supabase
+                            .from('sales_people')
+                            .update({ file_viewer_enabled: newValue })
+                            .eq('id', person.id);
+                          if (!error) {
+                            setSalesPeople(prev => prev.map(p => p.id === person.id ? { ...p, file_viewer_enabled: newValue } : p));
+                          }
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                          person.file_viewer_enabled ? 'bg-blue-500' : 'bg-slate-300'
+                        }`}
+                        title={person.file_viewer_enabled ? 'Disable File Viewer' : 'Enable File Viewer'}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow ${
+                            person.file_viewer_enabled ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex justify-end gap-2">
@@ -1905,7 +2123,7 @@ export function AdminPanel() {
                                     </button>
                                     <button
                                       onClick={async () => {
-                                        if (window.confirm(`Are you sure you want to delete ${contact.name}?`)) {
+                                        if (await dialog.confirm(`Are you sure you want to delete ${contact.name}?`)) {
                                           await deleteItem(contact.id);
                                           setShowDuplicates(false);
                                           loadData();

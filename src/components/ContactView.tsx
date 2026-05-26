@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, User, Mail, Phone, Building2, MapPin, FileText, Calendar, Plus, CreditCard as Edit2, Trash2, Save, Shield, Cake, Wine, Tag, Star, TrendingUp, Users, CheckSquare, Square, Upload, Download, DollarSign, Image } from 'lucide-react';
+import { X, User, Mail, Phone, Building2, MapPin, FileText, Calendar, Plus, CreditCard as Edit2, Trash2, Save, Shield, Cake, Wine, Tag, Star, TrendingUp, Users, CheckSquare, Square, Upload, Download, DollarSign, Image, AlertTriangle, Navigation } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { formatDateShort, formatDateWithWeekday, getTodayDateString } from '../lib/dateUtils';
 import { convertToJpeg, isImageFile } from '../lib/imageUtils';
+import { deductBudget, restoreBudget, adjustBudget, formatCurrency } from '../lib/budgetUtils';
 
 interface MeetingReceipt {
   id: string;
@@ -29,6 +31,7 @@ interface Contact {
   preferred_closer?: string;
   birthday?: string;
   drinks?: boolean;
+  driver?: boolean;
   client_type?: string;
   grade?: string;
   marketing_points?: number;
@@ -75,6 +78,7 @@ const typeLabels = {
 
 export function ContactView({ contactId, onClose }: ContactViewProps) {
   const { user, salesPerson, isAdminOrProcessor } = useAuth();
+  const dialog = useDialog();
   const [contact, setContact] = useState<Contact | null>(null);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,6 +100,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
   const [additionalContacts, setAdditionalContacts] = useState<Set<string>>(new Set());
   const [userContacts, setUserContacts] = useState<Array<{ id: string; name: string; type: string }>>([]);
   const [showAdditionalContacts, setShowAdditionalContacts] = useState(true);
+  const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
 
   useEffect(() => {
     loadContactData();
@@ -255,6 +260,14 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
         }
       }
 
+      if (hasExpense && expenseAmount && parseFloat(expenseAmount) > 0) {
+        const result = await deductBudget(salesPerson.id, parseFloat(expenseAmount));
+        if (result.exceeded && result.newBalance !== null) {
+          setBudgetWarning(`Your budget has been exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setTimeout(() => setBudgetWarning(null), 8000);
+        }
+      }
+
       setMeetingNotes('');
       setMeetingDate(getTodayDateString());
       setIsMeeting(false);
@@ -295,8 +308,10 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
   };
 
   const handleSaveMeeting = async (meetingId: string) => {
+    if (!salesPerson) return;
     try {
       const meeting = meetings.find(m => m.id === meetingId);
+      const oldExpenseAmount = (meeting?.has_expense && meeting?.expense_amount) ? meeting.expense_amount : 0;
       let receiptUrl = meeting?.receipt_url || null;
       const uploadedReceipts: { filePath: string; fileName: string }[] = [];
 
@@ -370,6 +385,15 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
         }
       }
 
+      const newExpenseAmount = (editMeetingForm.has_expense && editMeetingForm.expense_amount) ? parseFloat(editMeetingForm.expense_amount) : 0;
+      if (oldExpenseAmount !== newExpenseAmount) {
+        const result = await adjustBudget(salesPerson.id, oldExpenseAmount, newExpenseAmount);
+        if (result.exceeded && result.newBalance !== null) {
+          setBudgetWarning(`Your budget has been exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setTimeout(() => setBudgetWarning(null), 8000);
+        }
+      }
+
       setEditingMeetingId(null);
       setEditMeetingForm({ date: '', notes: '', is_meeting: false, is_text: false, is_call: false, is_email: false, has_expense: false, expense_payment_method: '', expense_amount: '', receipt_files: [] });
       loadContactData();
@@ -381,15 +405,24 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
   };
 
   const handleDeleteMeeting = async (meetingId: string) => {
-    if (!confirm('Are you sure you want to delete this meeting?')) return;
+    if (!(await dialog.confirm('Are you sure you want to delete this meeting?'))) return;
+    if (!salesPerson) return;
 
     try {
+      const meeting = meetings.find(m => m.id === meetingId);
+      const expenseToRestore = (meeting?.has_expense && meeting?.expense_amount) ? meeting.expense_amount : 0;
+
       const { error } = await supabase
         .from('meetings')
         .delete()
         .eq('id', meetingId);
 
       if (error) throw error;
+
+      if (expenseToRestore > 0) {
+        await restoreBudget(salesPerson.id, expenseToRestore);
+      }
+
       loadContactData();
     } catch (error: any) {
       console.error('Error deleting meeting:', error);
@@ -438,6 +471,15 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
         </div>
 
         <div className="p-6 space-y-6 max-h-[calc(100vh-200px)] overflow-y-auto">
+          {budgetWarning && (
+            <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg animate-pulse">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+              <span className="text-sm font-medium text-amber-800">{budgetWarning}</span>
+              <button onClick={() => setBudgetWarning(null)} className="ml-auto p-1 hover:bg-amber-100 rounded">
+                <X className="w-4 h-4 text-amber-600" />
+              </button>
+            </div>
+          )}
           <div className="bg-slate-50 rounded-lg p-6">
             <div className="flex items-start gap-4">
               <div className="bg-blue-100 rounded-full p-3">
@@ -445,9 +487,17 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
               </div>
               <div className="flex-1">
                 <h3 className="text-2xl font-bold text-slate-900 mb-1">{contact.name}</h3>
-                <span className="inline-block px-3 py-1 bg-blue-600 text-white text-sm font-medium rounded-full">
-                  {typeLabels[contact.type as keyof typeof typeLabels]}
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-block px-3 py-1 bg-blue-600 text-white text-sm font-medium rounded-full">
+                    {typeLabels[contact.type as keyof typeof typeLabels]}
+                  </span>
+                  {contact.driver && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-100 text-amber-800 text-sm font-semibold rounded-full border border-amber-200">
+                      <Navigation className="w-3.5 h-3.5" />
+                      Driver
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -1263,7 +1313,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
                                           if (error) {
                                             console.error('Error downloading receipt:', error);
-                                            alert('Failed to load receipt. Please try again.');
+                                            await dialog.alert('Failed to load receipt. Please try again.');
                                             return;
                                           }
 
@@ -1274,7 +1324,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                                           }
                                         } catch (error) {
                                           console.error('Error loading receipt:', error);
-                                          alert('Failed to load receipt. Please try again.');
+                                          await dialog.alert('Failed to load receipt. Please try again.');
                                         }
                                       }}
                                       className="flex items-center gap-1 px-2 py-1 text-sm text-yellow-700 hover:bg-yellow-100 rounded transition-colors"
@@ -1294,7 +1344,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
                                       if (error) {
                                         console.error('Error downloading receipt:', error);
-                                        alert('Failed to load receipt. Please try again.');
+                                        await dialog.alert('Failed to load receipt. Please try again.');
                                         return;
                                       }
 
@@ -1305,7 +1355,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                                       }
                                     } catch (error) {
                                       console.error('Error loading receipt:', error);
-                                      alert('Failed to load receipt. Please try again.');
+                                      await dialog.alert('Failed to load receipt. Please try again.');
                                     }
                                   }}
                                   className="flex items-center gap-1 px-2 py-1 text-sm text-yellow-700 hover:bg-yellow-100 rounded transition-colors"

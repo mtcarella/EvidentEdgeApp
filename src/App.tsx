@@ -7,7 +7,7 @@ import { FloatingChat } from './components/FloatingChat';
 import { ForcePasswordReset } from './components/ForcePasswordReset';
 
 function App() {
-  const { user, loading, forcePasswordReset } = useAuth();
+  const { user, loading, forcePasswordReset, chatEnabled } = useAuth();
 
   if (loading) {
     return (
@@ -31,7 +31,7 @@ function App() {
         <Route path="/" element={user ? <Dashboard /> : <LoginForm />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      {user && <FloatingChat />}
+      {user && chatEnabled && <FloatingChat />}
     </>
   );
 }

@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, Edit2, Trash2, X, Save, ExternalLink, FileSpreadsheet } from 'lucide-react';
+import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, CreditCard as Edit2, Trash2, X, Save, ExternalLink, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { formatDateForDisplay, nowInEST } from '../lib/dateUtils';
 
 interface VerifiedWire {
   id: string;
+  account_name: string;
   bank_name: string;
   routing_number: string;
   account_number: string;
@@ -42,6 +44,7 @@ type ViewMode = 'search' | 'add' | 'logs' | 'manage' | 'incoming';
 
 export function WireManagement() {
   const { user, userProfile } = useAuth();
+  const dialog = useDialog();
   const [viewMode, setViewMode] = useState<ViewMode>('search');
   const [loading, setLoading] = useState(false);
 
@@ -60,6 +63,7 @@ export function WireManagement() {
   const [searchPerformed, setSearchPerformed] = useState(false);
 
   const [newWire, setNewWire] = useState({
+    account_name: '',
     bank_name: '',
     routing_number: '',
     account_number: '',
@@ -143,36 +147,36 @@ export function WireManagement() {
 
   const handleSearch = async () => {
     if (!fileNumber || !routingNumber || !accountNumber || !reasonForWire) {
-      alert('Please fill in File Number, Routing Number, Account Number, and Reason for Wire');
+      await dialog.alert('Please fill in File Number, Routing Number, Account Number, and Reason for Wire');
       return;
     }
 
     if (reasonForWire === 'seller_proceeds' && (!propertyAddress || !sellerName)) {
-      alert('Please fill in Property Address and Seller Name for Seller Proceeds');
+      await dialog.alert('Please fill in Property Address and Seller Name for Seller Proceeds');
       return;
     }
     if (reasonForWire === 'payoff' && (!loanNumber || !propertyAddress)) {
-      alert('Please fill in Loan Number and Property Address for Payoff');
+      await dialog.alert('Please fill in Loan Number and Property Address for Payoff');
       return;
     }
     if (reasonForWire === 'commission' && (!propertyAddress || !agentType)) {
-      alert('Please fill in Property Address and Agent Type for Commission');
+      await dialog.alert('Please fill in Property Address and Agent Type for Commission');
       return;
     }
     if (reasonForWire === 'brokerage_account' && !furtherCreditTo) {
-      alert('Please fill in Further Credit To for Brokerage Account');
+      await dialog.alert('Please fill in Further Credit To for Brokerage Account');
       return;
     }
     if (reasonForWire === 'returned_wire' && (!borrowerName || !propertyAddress || !loanNumber)) {
-      alert('Please fill in Borrower Name, Property Address, and Loan Number for Returned Wire');
+      await dialog.alert('Please fill in Borrower Name, Property Address, and Loan Number for Returned Wire');
       return;
     }
     if (reasonForWire === 'returned_deposit' && (!propertyAddress || !buyerName)) {
-      alert('Please fill in Property Address and Buyer Name for Returned Deposit');
+      await dialog.alert('Please fill in Property Address and Buyer Name for Returned Deposit');
       return;
     }
     if (reasonForWire === 'buyer_excess_funds' && (!propertyAddress || !buyerName)) {
-      alert('Please fill in Property Address and Buyer Name for Buyer Excess Funds');
+      await dialog.alert('Please fill in Property Address and Buyer Name for Buyer Excess Funds');
       return;
     }
 
@@ -215,7 +219,7 @@ export function WireManagement() {
         setLogsRefreshTrigger(prev => prev + 1);
       }
     } catch (error) {
-      alert('An error occurred during search');
+      await dialog.alert('An error occurred during search');
     } finally {
       setLoading(false);
     }
@@ -379,13 +383,14 @@ TRANSFER INFORMATION
 
   const handleAddWire = async () => {
     if (!newWire.bank_name || !newWire.routing_number || !newWire.account_number || !newWire.approved_by || !newWire.date_approved) {
-      alert('Please fill in all required fields');
+      await dialog.alert('Please fill in all required fields');
       return;
     }
 
     setLoading(true);
     try {
       const { error } = await supabase.from('verified_wires').insert({
+        account_name: newWire.account_name.trim(),
         bank_name: newWire.bank_name.trim(),
         routing_number: newWire.routing_number.trim(),
         phone: newWire.phone.trim() || null,
@@ -396,10 +401,15 @@ TRANSFER INFORMATION
       });
 
       if (error) {
-        alert('Failed to add verified wire');
+        if (error.code === '23505') {
+          await dialog.alert('A verified wire with this routing number and account number already exists.');
+        } else {
+          await dialog.alert('Failed to add verified wire: ' + error.message);
+        }
       } else {
-        alert('Verified wire added successfully');
+        await dialog.alert('Verified wire added successfully');
         setNewWire({
+          account_name: '',
           bank_name: '',
           routing_number: '',
           account_number: '',
@@ -409,7 +419,7 @@ TRANSFER INFORMATION
         });
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }
@@ -462,7 +472,7 @@ TRANSFER INFORMATION
     if (!editFormData || !editingWire) return;
 
     if (!editFormData.bank_name || !editFormData.routing_number || !editFormData.account_number || !editFormData.approved_by || !editFormData.date_approved) {
-      alert('Please fill in all fields');
+      await dialog.alert('Please fill in all fields');
       return;
     }
 
@@ -471,6 +481,7 @@ TRANSFER INFORMATION
       const { error } = await supabase
         .from('verified_wires')
         .update({
+          account_name: (editFormData.account_name || '').trim(),
           bank_name: editFormData.bank_name.trim(),
           routing_number: editFormData.routing_number.trim(),
           account_number: editFormData.account_number.trim(),
@@ -481,21 +492,21 @@ TRANSFER INFORMATION
         .eq('id', editingWire.id);
 
       if (error) {
-        alert('Failed to update verified wire');
+        await dialog.alert('Failed to update verified wire');
       } else {
-        alert('Verified wire updated successfully');
+        await dialog.alert('Verified wire updated successfully');
         handleCancelEdit();
         loadAllWires();
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteWire = async (wireId: string, bankName: string) => {
-    if (!confirm(`Are you sure you want to delete the verified wire for ${bankName}? This action cannot be undone.`)) {
+    if (!(await dialog.confirm(`Are you sure you want to delete the verified wire for ${bankName}? This action cannot be undone.`))) {
       return;
     }
 
@@ -507,13 +518,13 @@ TRANSFER INFORMATION
         .eq('id', wireId);
 
       if (error) {
-        alert('Failed to delete verified wire');
+        await dialog.alert('Failed to delete verified wire');
       } else {
-        alert('Verified wire deleted successfully');
+        await dialog.alert('Verified wire deleted successfully');
         loadAllWires();
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }
@@ -987,6 +998,18 @@ TRANSFER INFORMATION
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
+                Account Name
+              </label>
+              <input
+                type="text"
+                value={newWire.account_name}
+                onChange={(e) => setNewWire({ ...newWire, account_name: e.target.value })}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter account name"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
                 Bank Name <span className="text-red-500">*</span>
               </label>
               <input
@@ -1191,6 +1214,7 @@ TRANSFER INFORMATION
               <table className="w-full">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="text-left py-3 px-4 font-semibold text-slate-700">Account Name</th>
                     <th className="text-left py-3 px-4 font-semibold text-slate-700">Bank Name</th>
                     <th className="text-left py-3 px-4 font-semibold text-slate-700">Routing #</th>
                     <th className="text-left py-3 px-4 font-semibold text-slate-700">Account #</th>
@@ -1205,6 +1229,15 @@ TRANSFER INFORMATION
                     <tr key={wire.id} className="hover:bg-slate-50">
                       {editingWire?.id === wire.id && editFormData ? (
                         <>
+                          <td className="py-3 px-4">
+                            <input
+                              type="text"
+                              value={editFormData.account_name || ''}
+                              onChange={(e) => setEditFormData({ ...editFormData, account_name: e.target.value })}
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-sm"
+                              placeholder="Account name"
+                            />
+                          </td>
                           <td className="py-3 px-4">
                             <input
                               type="text"
@@ -1277,6 +1310,7 @@ TRANSFER INFORMATION
                         </>
                       ) : (
                         <>
+                          <td className="py-3 px-4 text-sm text-slate-900">{wire.account_name || '-'}</td>
                           <td className="py-3 px-4 text-sm text-slate-900">{wire.bank_name}</td>
                           <td className="py-3 px-4 text-sm text-slate-600">{wire.routing_number}</td>
                           <td className="py-3 px-4 text-sm text-slate-600">{wire.account_number}</td>

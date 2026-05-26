@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { MessageSquare, Search, Download, CheckCircle, XCircle, Calendar, Phone, User, Globe, Monitor } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 
 interface SMSOptIn {
   id: string;
@@ -20,6 +21,7 @@ interface SMSOptIn {
 
 export function SMSOptInManagement() {
   const { salesPerson } = useAuth();
+  const dialog = useDialog();
   const [optIns, setOptIns] = useState<SMSOptIn[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -61,7 +63,7 @@ export function SMSOptInManagement() {
       setOptIns(enrichedOptIns);
     } catch (error: any) {
       console.error('Error fetching SMS opt-ins:', error);
-      alert('Failed to load SMS opt-in records');
+      await dialog.alert('Failed to load SMS opt-in records');
     } finally {
       setLoading(false);
     }

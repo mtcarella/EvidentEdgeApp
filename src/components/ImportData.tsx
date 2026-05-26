@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Upload, CheckCircle, XCircle, Eye, FileDown, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { checkForDuplicates } from '../lib/duplicateChecker';
 
 interface ImportResult {
@@ -34,6 +35,7 @@ export function ImportData() {
   const [processing, setProcessing] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const { user } = useAuth();
+  const dialog = useDialog();
 
   const detectNameColumns = (headers: string[]): { firstName?: string; lastName?: string; fullName?: string } => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
@@ -197,7 +199,7 @@ export function ImportData() {
       const { headers, rows } = parseCSV(text);
 
       if (rows.length === 0) {
-        alert('CSV file is empty or could not be parsed');
+        await dialog.alert('CSV file is empty or could not be parsed');
         return;
       }
 
@@ -220,7 +222,7 @@ export function ImportData() {
       setPreviewData(dataWithDuplicates);
       setCheckingDuplicates(false);
     } catch (error: any) {
-      alert('Error processing file: ' + error.message);
+      await dialog.alert('Error processing file: ' + error.message);
     } finally {
       setProcessing(false);
       if (event.target) event.target.value = '';

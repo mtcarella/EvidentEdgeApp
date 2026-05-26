@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, MessageSquare, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { Toast } from './Toast';
 
 interface SMSOptInModalProps {
@@ -11,6 +12,7 @@ interface SMSOptInModalProps {
 
 export default function SMSOptInModal({ isOpen, onClose }: SMSOptInModalProps) {
   const { user, salesPerson } = useAuth();
+  const dialog = useDialog();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [hasConsented, setHasConsented] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -126,7 +128,7 @@ export default function SMSOptInModal({ isOpen, onClose }: SMSOptInModalProps) {
   const handleOptOut = async () => {
     if (!user || !currentOptIn) return;
 
-    if (!confirm('Are you sure you want to opt out of SMS notifications?')) {
+    if (!(await dialog.confirm('Are you sure you want to opt out of SMS notifications?'))) {
       return;
     }
 

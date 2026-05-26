@@ -3,6 +3,7 @@ import { Calendar, Ticket, Upload, Check, X, Clock, Send, AlertCircle, Trash2 } 
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { Toast } from './Toast';
 
 interface YankeesTicket {
@@ -39,6 +40,7 @@ const SUPER_ADMIN_NAME = 'Mike Carella';
 
 export function YankeesTickets() {
   const { user, salesPerson } = useAuth();
+  const dialog = useDialog();
   const isSuperAdmin = salesPerson?.role === 'super_admin';
 
   const [activeTab, setActiveTab] = useState<Tab>('available');
@@ -188,7 +190,7 @@ export function YankeesTickets() {
   const handleConfirmUpload = async () => {
     if (uploadPreview.length === 0) return;
 
-    if (!confirm(`This will replace all ${uploadYear} tickets with ${uploadPreview.length} new entries. Continue?`)) {
+    if (!(await dialog.confirm(`This will replace all ${uploadYear} tickets with ${uploadPreview.length} new entries. Continue?`))) {
       return;
     }
 
@@ -332,7 +334,7 @@ Please log in to Evident Edge to approve or deny this request.`,
     if (!user) return;
 
     const action = approve ? 'approve' : 'deny';
-    if (!confirm(`Are you sure you want to ${action} this request?`)) return;
+    if (!(await dialog.confirm(`Are you sure you want to ${action} this request?`))) return;
 
     try {
       const { error: updateError } = await supabase
@@ -397,7 +399,7 @@ ${approve ? 'Please coordinate with Mike Carella on next steps.' : 'Please conta
   };
 
   const deleteTicket = async (ticket: YankeesTicket) => {
-    if (!confirm(`Delete game on ${formatDate(ticket.game_date)} vs ${ticket.opponent}?`)) return;
+    if (!(await dialog.confirm(`Delete game on ${formatDate(ticket.game_date)} vs ${ticket.opponent}?`))) return;
     try {
       const { error } = await supabase.from('yankees_tickets').delete().eq('id', ticket.id);
       if (error) throw error;

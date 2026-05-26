@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Shield, RefreshCw, Save, CheckSquare, Square } from 'lucide-react';
+import { Shield, RefreshCw, Save, CheckSquare, Square, Users } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 
 interface SalesPerson {
   id: string;
@@ -45,16 +46,20 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'manage_announcements', label: 'Manage Announcements', description: 'Create and manage announcements' },
   { name: 'employee_communication', label: 'Office Communication', description: 'Send emails and texts to employees' },
   { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
+  { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page for this user', special: true },
+  { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit budget amount for this user', special: true },
   { name: 'edit_admin_fields', label: 'Edit Admin Fields', description: 'Edit assignment, paralegal, preferred vendors, and processor notes', special: true },
 ];
 
 export function ModulePermissionsManager() {
   const { salesPersonId } = useAuth();
+  const dialog = useDialog();
   const [users, setUsers] = useState<SalesPerson[]>([]);
   const [permissions, setPermissions] = useState<Map<string, Set<string>>>(new Map());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [selectedUser, setSelectedUser] = useState<string>('');
+  const [friendsFamilyEnabled, setFriendsFamilyEnabled] = useState(false);
 
   useEffect(() => {
     loadUsers();
@@ -79,7 +84,7 @@ export function ModulePermissionsManager() {
       setUsers(data || []);
     } catch (error) {
       console.error('Error loading users:', error);
-      alert('Failed to load users');
+      await dialog.alert('Failed to load users');
     } finally {
       setLoading(false);
     }
@@ -103,9 +108,16 @@ export function ModulePermissionsManager() {
       });
 
       setPermissions(new Map(permissions.set(userId, userPermissions)));
+
+      const { data: userData } = await supabase
+        .from('sales_people')
+        .select('friends_family_enabled')
+        .eq('id', userId)
+        .maybeSingle();
+      setFriendsFamilyEnabled(userData?.friends_family_enabled || false);
     } catch (error) {
       console.error('Error loading permissions:', error);
-      alert('Failed to load permissions');
+      await dialog.alert('Failed to load permissions');
     } finally {
       setLoading(false);
     }
@@ -152,11 +164,22 @@ export function ModulePermissionsManager() {
         }
       }
 
-      alert('Permissions saved successfully');
+      const budgetDisplayEnabled = userPerms.has('budget_display');
+      const budgetEditEnabled = userPerms.has('budget_edit');
+      await supabase
+        .from('sales_people')
+        .update({
+          budget_display_enabled: budgetDisplayEnabled,
+          budget_edit_enabled: budgetEditEnabled,
+          friends_family_enabled: friendsFamilyEnabled,
+        })
+        .eq('id', selectedUser);
+
+      await dialog.alert('Permissions saved successfully');
       await loadPermissions(selectedUser);
     } catch (error: any) {
       console.error('Error saving permissions:', error);
-      alert(`Failed to save permissions: ${error.message || 'Unknown error'}`);
+      await dialog.alert(`Failed to save permissions: ${error.message || 'Unknown error'}`);
     } finally {
       setSaving(false);
     }
@@ -212,6 +235,39 @@ export function ModulePermissionsManager() {
             <p className="text-sm text-slate-600 mt-1">
               Select which modules this user can access. Current selections are based on their role.
             </p>
+          </div>
+
+          {/* Friends & Family Feature Toggle */}
+          <div className="mb-6">
+            <h3 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+              <Users className="w-5 h-5 text-cyan-600" />
+              Friends and Family
+            </h3>
+            <div
+              className={`p-5 border-2 rounded-lg transition-all cursor-pointer ${
+                friendsFamilyEnabled
+                  ? 'border-cyan-500 bg-cyan-50'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
+              }`}
+              onClick={() => setFriendsFamilyEnabled(!friendsFamilyEnabled)}
+            >
+              <label className="flex items-start gap-4 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={friendsFamilyEnabled}
+                  onChange={() => setFriendsFamilyEnabled(!friendsFamilyEnabled)}
+                  className="w-6 h-6 text-cyan-600 border-cyan-300 rounded focus:ring-2 focus:ring-cyan-500 cursor-pointer mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="font-bold text-slate-900 text-base mb-1">
+                    Enable Friends and Family
+                  </div>
+                  <div className="text-sm text-slate-700">
+                    Allow this user to submit and view Friends and Family requests. Overrides role-level default.
+                  </div>
+                </div>
+              </label>
+            </div>
           </div>
 
           {/* Special Administrative Permissions Section */}

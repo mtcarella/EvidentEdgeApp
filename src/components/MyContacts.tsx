@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle, Navigation } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { ContactView } from './ContactView';
 import { formatContactData } from '../lib/formatters';
@@ -9,6 +10,7 @@ import { ContactEditModal } from './ContactEditModal';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
 import { formatDateShort, getESTToday, getTodayDateString } from '../lib/dateUtils';
 import { convertToJpeg, isImageFile } from '../lib/imageUtils';
+import { deductBudget, formatCurrency } from '../lib/budgetUtils';
 import * as XLSX from 'xlsx';
 
 interface Contact {
@@ -24,6 +26,7 @@ interface Contact {
   client_paralegal_processor?: string;
   evident_paralegal?: string;
   marketing_points?: number;
+  driver?: boolean;
   notes?: string;
   processor_notes?: string;
   created_at: string;
@@ -45,9 +48,14 @@ const typeLabels = {
   vendor: 'Vendor',
 };
 
-export function MyContacts() {
+interface MyContactsProps {
+  onNavigateToBudgetRequests?: () => void;
+}
+
+export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   const { salesPerson, isAdminOrProcessor, isAdmin, user } = useAuth();
   const { isMobile } = useDeviceDetection();
+  const dialog = useDialog();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [salesPeople, setSalesPeople] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +87,7 @@ export function MyContacts() {
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -208,7 +217,7 @@ export function MyContacts() {
       setEditForm({});
     } catch (error: any) {
       console.error('Error updating contact:', error);
-      alert('Failed to update contact: ' + error.message);
+      await dialog.alert('Failed to update contact: ' + error.message);
     }
   };
 
@@ -239,14 +248,14 @@ export function MyContacts() {
     }
   };
 
-  const handleEmailList = () => {
+  const handleEmailList = async () => {
     const selectedEmails = contacts
       .filter(c => selectedContacts.has(c.id) && c.email)
       .map(c => c.email)
       .filter(Boolean);
 
     if (selectedEmails.length === 0) {
-      alert('Please select at least one contact with an email address');
+      await dialog.alert('Please select at least one contact with an email address');
       return;
     }
 
@@ -348,11 +357,19 @@ export function MyContacts() {
         await supabase.from('meeting_receipts').insert(receiptsToInsert);
       }
 
+      if (quickMeetingHasExpense && quickMeetingExpenseAmount && parseFloat(quickMeetingExpenseAmount) > 0) {
+        const result = await deductBudget(salesPerson.id, parseFloat(quickMeetingExpenseAmount));
+        if (result.exceeded && result.newBalance !== null) {
+          setBudgetWarning(`Your budget has been exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setTimeout(() => setBudgetWarning(null), 8000);
+        }
+      }
+
       resetQuickMeetingForm();
-      alert('Meeting logged successfully!');
+      await dialog.alert('Meeting logged successfully!');
     } catch (error: any) {
       console.error('Error adding meeting:', error);
-      alert('Failed to log meeting: ' + error.message);
+      await dialog.alert('Failed to log meeting: ' + error.message);
     } finally {
       setQuickMeetingSaving(false);
     }
@@ -365,7 +382,7 @@ export function MyContacts() {
 
   const exportMyContacts = async () => {
     if (!salesPerson?.id) {
-      alert('Unable to identify current user');
+      await dialog.alert('Unable to identify current user');
       return;
     }
 
@@ -395,7 +412,7 @@ export function MyContacts() {
       if (error) throw error;
 
       if (!data || data.length === 0) {
-        alert('No contacts assigned to you');
+        await dialog.alert('No contacts assigned to you');
         return;
       }
 
@@ -421,7 +438,7 @@ export function MyContacts() {
       XLSX.writeFile(workbook, `my_contacts_${getTodayDateString()}.xlsx`);
     } catch (error) {
       console.error('Error exporting contacts:', error);
-      alert('Failed to export contacts');
+      await dialog.alert('Failed to export contacts');
     } finally {
       setExportLoading(false);
     }
@@ -561,6 +578,15 @@ export function MyContacts() {
 
   return (
     <div className={`bg-white rounded-xl shadow-sm overflow-hidden ${isMobile ? 'p-3' : 'p-6'}`}>
+      {budgetWarning && (
+        <div className="flex items-center gap-3 p-3 mb-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <span className="text-sm font-medium text-amber-800">{budgetWarning}</span>
+          <button onClick={() => setBudgetWarning(null)} className="ml-auto p-1 hover:bg-amber-100 rounded">
+            <X className="w-4 h-4 text-amber-600" />
+          </button>
+        </div>
+      )}
       <div className={isMobile ? 'mb-4' : 'mb-6'}>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-2 gap-2">
           <h2 className={`font-bold text-slate-900 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none ${isMobile ? 'text-lg' : 'text-2xl'}`}>
@@ -578,6 +604,17 @@ export function MyContacts() {
               <Mail className="w-4 h-4" />
               <span>{isMobile ? 'Email' : `Email List${selectedContacts.size > 0 ? ` (${selectedContacts.size})` : ''}`}</span>
             </button>
+            {onNavigateToBudgetRequests && (
+              <button
+                onClick={onNavigateToBudgetRequests}
+                className={`bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors flex items-center text-sm flex-shrink-0 ${
+                  isMobile ? 'px-3 py-2 gap-1' : 'px-4 py-2 gap-2'
+                }`}
+              >
+                <DollarSign className="w-4 h-4" />
+                <span>{isMobile ? 'F&F' : 'Friends and Family'}</span>
+              </button>
+            )}
             <button
               onClick={exportMyContacts}
               disabled={exportLoading}
@@ -944,6 +981,12 @@ export function MyContacts() {
                             <span className="text-xs font-medium px-2 py-1 bg-slate-100 text-slate-700 rounded whitespace-nowrap">
                               {typeLabels[contact.type as keyof typeof typeLabels]}
                             </span>
+                            {contact.driver && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded-full border border-amber-200 whitespace-nowrap">
+                                <Navigation className="w-2.5 h-2.5" />
+                                Driver
+                              </span>
+                            )}
                           </div>
                           <div className={`text-slate-600 break-words ${isMobile ? 'text-xs' : 'text-sm'}`}>
                             {contact.email && <span className="break-all">{contact.email}</span>}

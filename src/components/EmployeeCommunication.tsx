@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Send, Users, Mail, MessageSquare, Plus, X, CreditCard as Edit2, Trash2, UserPlus, UserMinus, Search, Clock, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { Toast } from './Toast';
 import ContactExecutive from './ContactExecutive';
 
@@ -50,6 +51,7 @@ type Tab = 'groups' | 'history';
 
 export default function EmployeeCommunication() {
   const { user, salesPerson } = useAuth();
+  const dialog = useDialog();
   const [activeTab, setActiveTab] = useState<Tab>('groups');
   const [users, setUsers] = useState<User[]>([]);
   const [groups, setGroups] = useState<UserGroup[]>([]);
@@ -302,7 +304,7 @@ export default function EmployeeCommunication() {
       }
 
       // Log the communication
-      const { error: logError } = await supabase
+      const { data: logData, error: logError } = await supabase
         .from('communication_logs')
         .insert({
           sent_by: user?.id,
@@ -312,11 +314,14 @@ export default function EmployeeCommunication() {
           group_id: groupId,
           subject: communicationType === 'email' ? subject : null,
           message: message
-        });
+        })
+        .select('id')
+        .single();
 
       if (logError) {
         console.error('Error logging communication:', logError);
       }
+
 
       if (result.success) {
         setNotification({
@@ -404,7 +409,7 @@ export default function EmployeeCommunication() {
   };
 
   const handleDeleteGroup = async (groupId: string) => {
-    if (!confirm('Are you sure you want to delete this group? This will remove all members from the group.')) {
+    if (!(await dialog.confirm('Are you sure you want to delete this group? This will remove all members from the group.'))) {
       return;
     }
 
@@ -486,7 +491,7 @@ export default function EmployeeCommunication() {
   };
 
   const handleDeleteCommunicationLog = async (logId: string) => {
-    if (!confirm('Are you sure you want to delete this communication log? This action cannot be undone.')) {
+    if (!(await dialog.confirm('Are you sure you want to delete this communication log? This action cannot be undone.'))) {
       return;
     }
 
@@ -598,6 +603,61 @@ export default function EmployeeCommunication() {
                         className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                       />
                     </div>
+
+                    {editingGroup && (
+                      <div className="border-t border-slate-200 pt-3 mt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h5 className="font-medium text-slate-700 flex items-center gap-2">
+                            <Users className="w-4 h-4 text-blue-600" />
+                            Group Members ({groupMembers.length})
+                          </h5>
+                        </div>
+
+                        <div className="mb-3">
+                          <select
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                handleAddMemberToGroup(e.target.value);
+                                e.target.value = '';
+                              }
+                            }}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          >
+                            <option value="">-- Add a member --</option>
+                            {users
+                              .filter(u => !groupMembers.find(m => m.user_id === u.user_id))
+                              .map(u => (
+                                <option key={u.id} value={u.user_id}>
+                                  {u.name} ({u.email})
+                                </option>
+                              ))
+                            }
+                          </select>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                          {groupMembers.map(member => (
+                            <div key={member.id} className="flex items-center justify-between p-2 bg-white rounded border border-slate-100">
+                              <div className="min-w-0">
+                                <div className="font-medium text-slate-800 text-sm">{member.user_name}</div>
+                                <div className="text-xs text-slate-500 truncate">{member.user_email}</div>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveMemberFromGroup(member.id)}
+                                className="p-1 text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0 ml-2"
+                                title="Remove member"
+                              >
+                                <UserMinus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          {groupMembers.length === 0 && (
+                            <p className="text-sm text-slate-400 text-center py-3">No members assigned to this group</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex gap-2">
                       <button
                         onClick={editingGroup ? handleUpdateGroup : handleCreateGroup}
@@ -611,6 +671,7 @@ export default function EmployeeCommunication() {
                           setEditingGroup(null);
                           setNewGroupName('');
                           setNewGroupDescription('');
+                          setManagingGroupId(null);
                         }}
                         className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors"
                       >
@@ -640,6 +701,8 @@ export default function EmployeeCommunication() {
                             setEditingGroup(group);
                             setNewGroupName(group.name);
                             setNewGroupDescription(group.description || '');
+                            setManagingGroupId(group.id);
+                            fetchGroupMembers(group.id);
                           }}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           title="Edit group"

@@ -31,7 +31,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { type, recipients: inputRecipients, notifySuperAdmins, subject, message, senderName, senderEmail, sendCopyToSender = true }: SendCommunicationRequest = await req.json();
+    const { type, recipients: inputRecipients, notifySuperAdmins, subject, message, senderName, senderEmail, sendCopyToSender = false }: SendCommunicationRequest = await req.json();
 
     let recipients = inputRecipients ?? [];
 

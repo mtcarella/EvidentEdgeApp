@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Save, X, CheckSquare, Square, Shield, RefreshCw, Key } from 'lucide-react';
+import { Save, X, CheckSquare, Square, Shield, RefreshCw, Key, DollarSign, Users, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useDialog } from '../contexts/DialogContext';
 
 interface SalesPerson {
   id: string;
@@ -15,6 +16,11 @@ interface SalesPerson {
   requires_weekly_reports?: boolean;
   force_password_reset?: boolean;
   chat_enabled?: boolean;
+  budget?: number;
+  budget_display_enabled?: boolean;
+  budget_edit_enabled?: boolean;
+  friends_family_enabled?: boolean;
+  file_viewer_enabled?: boolean;
 }
 
 interface UserEditPanelProps {
@@ -41,9 +47,12 @@ const AVAILABLE_MODULES = [
   { name: 'resources', label: 'Resources', description: 'View company resources' },
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
   { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
+  { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page' },
+  { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit user budget' },
 ];
 
 export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
+  const dialog = useDialog();
   const [editForm, setEditForm] = useState({
     name: user.name,
     email: user.email,
@@ -55,6 +64,11 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
     requires_weekly_reports: user.requires_weekly_reports || false,
     force_password_reset: user.force_password_reset || false,
     chat_enabled: user.chat_enabled !== false,
+    budget_display_enabled: user.budget_display_enabled || false,
+    budget_edit_enabled: user.budget_edit_enabled || false,
+    budget: user.budget ?? 0,
+    friends_family_enabled: user.friends_family_enabled || false,
+    file_viewer_enabled: user.file_viewer_enabled || false,
   });
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -104,7 +118,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const updateData = {
+      const updateData: Record<string, any> = {
         name: editForm.name,
         email: editForm.email,
         cell_phone: editForm.cell_phone || null,
@@ -115,7 +129,15 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
         requires_weekly_reports: editForm.requires_weekly_reports,
         force_password_reset: editForm.force_password_reset,
         chat_enabled: editForm.chat_enabled,
+        budget_display_enabled: editForm.budget_display_enabled,
+        budget_edit_enabled: editForm.budget_edit_enabled,
+        friends_family_enabled: editForm.friends_family_enabled,
+        file_viewer_enabled: editForm.file_viewer_enabled,
       };
+
+      if (editForm.budget_edit_enabled) {
+        updateData.budget = editForm.budget;
+      }
 
       const { error: userError } = await supabase
         .from('sales_people')
@@ -124,10 +146,16 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
 
       if (userError) throw userError;
 
+      const syncedPermissions = new Set(permissions);
+      if (editForm.budget_display_enabled) syncedPermissions.add('budget_display');
+      else syncedPermissions.delete('budget_display');
+      if (editForm.budget_edit_enabled) syncedPermissions.add('budget_edit');
+      else syncedPermissions.delete('budget_edit');
+
       const permissionsToUpsert = AVAILABLE_MODULES.map((module) => ({
         user_id: user.id,
         module_name: module.name,
-        has_access: permissions.has(module.name),
+        has_access: syncedPermissions.has(module.name),
       }));
 
       const { error: permError } = await supabase
@@ -139,9 +167,10 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
       if (permError) throw permError;
 
       onSave();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving user:', error);
-      alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const message = error?.message || (typeof error === 'string' ? error : 'Unknown error');
+      await dialog.alert(`Failed to save: ${message}`);
     } finally {
       setSaving(false);
     }
@@ -157,15 +186,15 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
 
   const handlePasswordReset = async () => {
     if (!newPassword) {
-      alert('Please enter a new password');
+      await dialog.alert('Please enter a new password');
       return;
     }
     if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters');
+      await dialog.alert('Password must be at least 6 characters');
       return;
     }
     if (!user.user_id) {
-      alert('User does not have a user_id, cannot reset password');
+      await dialog.alert('User does not have a user_id, cannot reset password');
       return;
     }
 
@@ -204,7 +233,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
       setTimeout(() => setPasswordResetMessage(''), 3000);
     } catch (error) {
       console.error('Error resetting password:', error);
-      alert(`Failed to reset password: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      await dialog.alert(`Failed to reset password: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setResettingPassword(false);
     }
@@ -416,6 +445,92 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
                 <span className="text-sm text-slate-700">Weekly Reports Required</span>
               </div>
             </div>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-emerald-600" />
+              Budget Settings
+            </label>
+            <div className="space-y-3">
+              <div
+                className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+                onClick={() => setEditForm({ ...editForm, budget_display_enabled: !editForm.budget_display_enabled })}
+              >
+                {editForm.budget_display_enabled ? (
+                  <CheckSquare className="w-5 h-5 text-emerald-600" />
+                ) : (
+                  <Square className="w-5 h-5 text-slate-400" />
+                )}
+                <span className="text-sm text-slate-700">Enable Budget Display</span>
+              </div>
+              <div
+                className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+                onClick={() => setEditForm({ ...editForm, budget_edit_enabled: !editForm.budget_edit_enabled })}
+              >
+                {editForm.budget_edit_enabled ? (
+                  <CheckSquare className="w-5 h-5 text-emerald-600" />
+                ) : (
+                  <Square className="w-5 h-5 text-slate-400" />
+                )}
+                <span className="text-sm text-slate-700">Enable Budget Edit</span>
+              </div>
+              {editForm.budget_edit_enabled && (
+                <div className="ml-8">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Budget Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editForm.budget}
+                      onChange={(e) => setEditForm({ ...editForm, budget: parseFloat(e.target.value) || 0 })}
+                      className="w-full pl-7 pr-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">Set the user's budget balance</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
+              <Users className="w-4 h-4 text-cyan-600" />
+              Friends and Family
+            </label>
+            <div
+              className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+              onClick={() => setEditForm({ ...editForm, friends_family_enabled: !editForm.friends_family_enabled })}
+            >
+              {editForm.friends_family_enabled ? (
+                <CheckSquare className="w-5 h-5 text-cyan-600" />
+              ) : (
+                <Square className="w-5 h-5 text-slate-400" />
+              )}
+              <span className="text-sm text-slate-700">Enable Friends and Family</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">When enabled, this user can access the Friends and Family request feature</p>
+          </div>
+
+          <div className="border-t border-slate-200 pt-4">
+            <label className="block text-sm font-medium text-slate-700 mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-600" />
+              File Viewer
+            </label>
+            <div
+              className="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-50"
+              onClick={() => setEditForm({ ...editForm, file_viewer_enabled: !editForm.file_viewer_enabled })}
+            >
+              {editForm.file_viewer_enabled ? (
+                <CheckSquare className="w-5 h-5 text-blue-600" />
+              ) : (
+                <Square className="w-5 h-5 text-slate-400" />
+              )}
+              <span className="text-sm text-slate-700">Enable File Viewer</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-1">When enabled, this user can access the File Viewer module to search document intake records</p>
           </div>
         </div>
 

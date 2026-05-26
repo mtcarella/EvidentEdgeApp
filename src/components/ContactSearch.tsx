@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, User, Users, Briefcase, Scale, CreditCard as Edit2, X, Save, Eye, Cake, Wrench } from 'lucide-react';
+import { Search, User, Users, Briefcase, Scale, CreditCard as Edit2, X, Save, Eye, Cake, Wrench, Navigation, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useModulePermissions } from '../hooks/useModulePermissions';
@@ -27,6 +27,7 @@ interface SearchResult {
   preferred_closer?: string;
   birthday?: string;
   drinks?: boolean;
+  driver?: boolean;
   notes?: string;
   processor_notes?: string;
 }
@@ -117,6 +118,9 @@ export function ContactSearch() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [crossoverPerson, setCrossoverPerson] = useState<string | null>(null);
+  const [driverContacts, setDriverContacts] = useState<SearchResult[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
+  const [driverSalesPerson, setDriverSalesPerson] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<SearchResult>>({});
   const [viewingContactId, setViewingContactId] = useState<string | null>(null);
@@ -160,6 +164,7 @@ export function ContactSearch() {
           preferred_closer,
           birthday,
           drinks,
+          driver,
           notes,
           processor_notes,
           assigned_to,
@@ -224,6 +229,7 @@ export function ContactSearch() {
             preferred_closer: contact.preferred_closer,
             birthday: contact.birthday,
             drinks: contact.drinks,
+            driver: contact.driver,
             notes: contact.notes,
             processor_notes: contact.processor_notes,
           }));
@@ -235,27 +241,51 @@ export function ContactSearch() {
 
         setResults(formattedResults);
 
-        const salesPeople = formattedResults
-          .map(r => r.salesPerson)
-          .filter(sp => sp !== 'Unassigned');
+        // Driver detection and salesperson resolution
+        const drivers = formattedResults.filter(r => r.driver);
+        setDriverContacts(drivers);
+        setSelectedDriverId(null);
+        setDriverSalesPerson(null);
 
-        const uniqueSalesPeople = [...new Set(salesPeople)];
+        if (drivers.length === 1) {
+          // Single driver: auto-assign their salesperson
+          setSelectedDriverId(drivers[0].id);
+          if (drivers[0].salesPerson !== 'Unassigned') {
+            setDriverSalesPerson(drivers[0].salesPerson);
+          }
+        } else if (drivers.length > 1) {
+          // Multiple drivers: auto-select first one with a salesperson
+          const firstWithSP = drivers.find(d => d.salesPerson !== 'Unassigned');
+          if (firstWithSP) {
+            setSelectedDriverId(firstWithSP.id);
+            setDriverSalesPerson(firstWithSP.salesPerson);
+          }
+        }
 
-        if (uniqueSalesPeople.length > 1) {
-          const salesPersonCounts = salesPeople.reduce((acc: Record<string, number>, sp) => {
-            acc[sp] = (acc[sp] || 0) + 1;
-            return acc;
-          }, {});
+        // Only use existing crossover logic if no driver contacts found
+        if (drivers.length === 0) {
+          const salesPeople = formattedResults
+            .map(r => r.salesPerson)
+            .filter(sp => sp !== 'Unassigned');
 
-          const maxCount = Math.max(...Object.values(salesPersonCounts));
-          const crossovers = Object.entries(salesPersonCounts)
-            .filter(([_, count]) => count === maxCount)
-            .map(([name]) => name);
+          const uniqueSalesPeople = [...new Set(salesPeople)];
 
-          if (crossovers.length === 1) {
-            setCrossoverPerson(crossovers[0]);
-          } else {
-            setCrossoverPerson(crossovers.join(' & '));
+          if (uniqueSalesPeople.length > 1) {
+            const salesPersonCounts = salesPeople.reduce((acc: Record<string, number>, sp) => {
+              acc[sp] = (acc[sp] || 0) + 1;
+              return acc;
+            }, {});
+
+            const maxCount = Math.max(...Object.values(salesPersonCounts));
+            const crossovers = Object.entries(salesPersonCounts)
+              .filter(([_, count]) => count === maxCount)
+              .map(([name]) => name);
+
+            if (crossovers.length === 1) {
+              setCrossoverPerson(crossovers[0]);
+            } else {
+              setCrossoverPerson(crossovers.join(' & '));
+            }
           }
         }
       } else {
@@ -283,6 +313,9 @@ export function ContactSearch() {
     });
     setResults([]);
     setCrossoverPerson(null);
+    setDriverContacts([]);
+    setSelectedDriverId(null);
+    setDriverSalesPerson(null);
   };
 
   const loadUpcomingBirthdays = async () => {
@@ -563,7 +596,99 @@ export function ContactSearch() {
         </button>
       </div>
 
-      {results.length > 0 && getFilledFilterCount() > 1 && (
+      {/* Driver Detection Panel */}
+      {driverContacts.length > 0 && (
+        <div className="mb-6 p-5 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-300 rounded-lg shadow-sm">
+          <div className="flex items-center gap-2 mb-3">
+            <Navigation className="w-5 h-5 text-amber-600" />
+            <p className="text-sm font-bold text-amber-800">
+              Driver Contact{driverContacts.length > 1 ? 's' : ''} Detected
+            </p>
+          </div>
+
+          {driverContacts.length === 1 ? (
+            <div>
+              {driverContacts[0].salesPerson !== 'Unassigned' ? (
+                <div>
+                  <p className="text-lg font-bold text-amber-900">
+                    Salesperson assigned via Driver: {driverContacts[0].name}
+                  </p>
+                  <p className="text-2xl font-bold text-amber-700 mt-1 flex items-center gap-2">
+                    {driverContacts[0].salesPerson}
+                    <span className="text-xs font-semibold px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full">Driver Credit</span>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-800 font-medium">
+                    Driver contact found ({driverContacts[0].name}) but no salesperson assigned — please assign manually
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <p className="text-sm text-amber-800 mb-3">
+                Multiple driver contacts found. Select which driver's salesperson should be primary:
+              </p>
+              <div className="space-y-2">
+                {driverContacts.map((d) => (
+                  <label
+                    key={d.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedDriverId === d.id
+                        ? 'border-amber-500 bg-amber-100'
+                        : 'border-amber-200 bg-white hover:border-amber-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="driver-selection"
+                      checked={selectedDriverId === d.id}
+                      onChange={() => {
+                        setSelectedDriverId(d.id);
+                        setDriverSalesPerson(d.salesPerson !== 'Unassigned' ? d.salesPerson : null);
+                      }}
+                      className="w-4 h-4 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div className="flex-1">
+                      <span className="font-semibold text-slate-900">{d.name}</span>
+                      <span className="text-sm text-slate-500 ml-2">({typeLabels[d.type as keyof typeof typeLabels] || d.type})</span>
+                    </div>
+                    {d.salesPerson !== 'Unassigned' ? (
+                      <span className="text-sm font-medium text-amber-800 flex items-center gap-1">
+                        {d.salesPerson}
+                        <span className="text-xs px-1.5 py-0.5 bg-amber-200 text-amber-800 rounded">Driver Credit</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium text-red-600 flex items-center gap-1">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        No salesperson
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              {driverSalesPerson && (
+                <p className="mt-3 text-base font-bold text-amber-900">
+                  Primary: {driverSalesPerson} <span className="text-xs font-semibold px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full">Driver Credit</span>
+                </p>
+              )}
+              {selectedDriverId && !driverSalesPerson && (
+                <div className="mt-3 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-800 font-medium">
+                    Selected driver has no salesperson assigned — please assign manually
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {results.length > 0 && getFilledFilterCount() > 1 && driverContacts.length === 0 && (
         <div className="mb-6 p-5 bg-gradient-to-r from-blue-50 to-slate-50 border-2 border-blue-300 rounded-lg shadow-sm">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
@@ -697,10 +822,11 @@ export function ContactSearch() {
                             className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                           >
                             <option value="">None</option>
+                            <option value="Danielle">Danielle</option>
+                            <option value="Jahaira">Jahaira</option>
                             <option value="Kristen">Kristen</option>
                             <option value="Lisa">Lisa</option>
                             <option value="Raphael">Raphael</option>
-                            <option value="Danielle">Danielle</option>
                           </select>
                         </div>
                       )}
@@ -794,6 +920,12 @@ export function ContactSearch() {
                           <span className="text-xs font-medium px-2 py-1 bg-slate-100 text-slate-700 rounded">
                             {typeLabels[result.type as keyof typeof typeLabels]}
                           </span>
+                          {result.driver && (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full border border-amber-200">
+                              <Navigation className="w-3 h-3" />
+                              Driver
+                            </span>
+                          )}
                         </div>
                         <div className="text-sm text-slate-600 space-y-1">
                           {result.branch && <p>Branch: {result.branch}</p>}
@@ -826,6 +958,9 @@ export function ContactSearch() {
                       <div className="text-right">
                         <p className="text-xs text-slate-500 mb-1">Assigned to</p>
                         <p className="font-semibold text-blue-600">{result.salesPerson}</p>
+                        {result.driver && result.salesPerson !== 'Unassigned' && (
+                          <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">Driver Credit</span>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         {userCanEdit ? (

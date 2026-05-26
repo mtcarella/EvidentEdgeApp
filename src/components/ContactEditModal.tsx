@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Save, X, User, Users, Briefcase, Scale, Wrench } from 'lucide-react';
+import { Save, X, User, Users, Briefcase, Scale, Wrench, Navigation } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatContactData } from '../lib/formatters';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { useModulePermissions } from '../hooks/useModulePermissions';
 
 interface ContactEditModalProps {
@@ -33,6 +34,7 @@ const typeLabels = {
 export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isAdmin, onSave, onCancel }: ContactEditModalProps) {
   const { user, salesPersonId } = useAuth();
   const { hasAccess } = useModulePermissions(user?.id, salesPersonId);
+  const dialog = useDialog();
   const canEditAdminFields = isAdminOrProcessor || hasAccess('edit_admin_fields');
 
   const [editForm, setEditForm] = useState({
@@ -58,6 +60,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
     client_type: contact.client_type || 'prospect',
     grade: contact.grade || 'C',
     marketing_points: contact.marketing_points || 0,
+    driver: contact.driver ?? false,
     newSalespersonId: contact.assignments?.[0]?.salesperson_id || contact.assigned_to || '',
   });
   const [saving, setSaving] = useState(false);
@@ -91,6 +94,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
         marketing_points: editForm.marketing_points,
         client_paralegal_processor: toNullIfEmpty(editForm.client_paralegal_processor),
         client_identifier_no: toNullIfEmpty(editForm.client_identifier_no),
+        driver: editForm.driver,
       };
 
       // Admin/processor only fields
@@ -122,7 +126,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
 
       if (contactError) {
         console.error('Supabase error details:', contactError);
-        alert(`Failed to update contact: ${contactError.message}`);
+        await dialog.alert(`Failed to update contact: ${contactError.message}`);
         setSaving(false);
         return;
       }
@@ -191,7 +195,7 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
       onSave();
     } catch (error: any) {
       console.error('Unexpected error updating contact:', error);
-      alert('Failed to update contact: ' + (error.message || 'Unknown error'));
+      await dialog.alert('Failed to update contact: ' + (error.message || 'Unknown error'));
       setSaving(false);
     }
   };
@@ -265,6 +269,23 @@ export function ContactEditModal({ contact, salesPeople, isAdminOrProcessor, isA
                 <option value="attorney">Attorney</option>
                 <option value="vendor">Vendor</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Driver</label>
+              <div
+                onClick={() => setEditForm({ ...editForm, driver: !editForm.driver })}
+                className={`flex items-center gap-3 cursor-pointer px-3 py-2 border rounded-lg transition-all ${
+                  editForm.driver
+                    ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-200'
+                    : 'border-slate-300 hover:border-slate-400'
+                }`}
+              >
+                <Navigation className={`w-5 h-5 ${editForm.driver ? 'text-amber-600' : 'text-slate-400'}`} />
+                <span className={`text-sm font-medium ${editForm.driver ? 'text-amber-800' : 'text-slate-600'}`}>
+                  {editForm.driver ? 'Driver Contact' : 'Not a Driver'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Driver contacts take priority for salesperson credit</p>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Client Paralegal/Processor</label>

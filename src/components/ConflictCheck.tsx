@@ -1,7 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Search, User, AlertCircle, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
+
+const DEFAULT_NO_RESULTS_MESSAGE =
+  'Great! You\'ve Found a New Prospect!\n\nThis contact is **not** in our system yet. Please contact **Michele** to have them added to the system.\n\n*Great job on finding a new future client!*';
+
+function renderFormattedMessage(text: string): string {
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/\n/g, '<br />');
+
+  return html;
+}
 
 interface Contact {
   id: string;
@@ -23,6 +39,20 @@ export function ConflictCheck() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<Contact[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
+  const [noResultsMessage, setNoResultsMessage] = useState(DEFAULT_NO_RESULTS_MESSAGE);
+
+  useEffect(() => {
+    supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', 'conflict_search_no_results_message')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data?.value) {
+          setNoResultsMessage(data.value);
+        }
+      });
+  }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,15 +191,10 @@ export function ConflictCheck() {
                     <CheckCircle className="w-12 h-12 text-green-600" />
                   </div>
                 </div>
-                <h3 className="text-xl font-bold text-green-900 mb-2">
-                  Great! You've Found a New Prospect!
-                </h3>
-                <p className="text-green-800 text-lg leading-relaxed">
-                  This contact is not in our system yet. Please contact <span className="font-semibold">Michele</span> to have them added to the system.
-                </p>
-                <p className="text-green-700 mt-3 font-medium">
-                  Great job on finding a new future client!
-                </p>
+                <div
+                  className="text-green-800 text-lg leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: renderFormattedMessage(noResultsMessage) }}
+                />
               </div>
             ) : (
               <div className="space-y-4">

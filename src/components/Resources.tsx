@@ -3,6 +3,7 @@ import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, Cre
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
+import { useDialog } from '../contexts/DialogContext';
 import { Toast } from './Toast';
 
 const ICON_OPTIONS: Record<string, typeof FileText> = {
@@ -66,6 +67,7 @@ interface ResourceCategory {
 export function Resources() {
   const { salesPerson, isAdmin } = useAuth();
   const { isMobile } = useDeviceDetection();
+  const dialog = useDialog();
   const [resources, setResources] = useState<Resource[]>([]);
   const [categories, setCategories] = useState<ResourceCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,7 +224,7 @@ export function Resources() {
       setPreviewResource(resource);
     } catch (error) {
       console.error('Error previewing resource:', error);
-      alert('Failed to preview resource');
+      await dialog.alert('Failed to preview resource');
     }
   };
 
@@ -253,12 +255,12 @@ export function Resources() {
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Error downloading resource:', error);
-      alert('Failed to download resource');
+      await dialog.alert('Failed to download resource');
     }
   };
 
   const handleDelete = async (resource: Resource) => {
-    if (!confirm(`Are you sure you want to delete "${resource.title}"?`)) return;
+    if (!(await dialog.confirm(`Are you sure you want to delete "${resource.title}"?`))) return;
 
     try {
       const { error: dbError } = await supabase
@@ -277,7 +279,7 @@ export function Resources() {
       await fetchResources();
     } catch (error) {
       console.error('Error deleting resource:', error);
-      alert('Failed to delete resource');
+      await dialog.alert('Failed to delete resource');
     }
   };
 
@@ -296,7 +298,7 @@ export function Resources() {
 
     // Only admins and super admins can change categories
     if (!isAdmin) {
-      alert('You do not have permission to change resource categories.');
+      await dialog.alert('You do not have permission to change resource categories.');
       return;
     }
 
@@ -368,7 +370,7 @@ export function Resources() {
       handleEditCancel();
     } catch (error: any) {
       console.error('Error updating resource:', error);
-      alert(error.message || 'Failed to update resource category');
+      await dialog.alert(error.message || 'Failed to update resource category');
     } finally {
       setEditLoading(false);
     }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket, FileSearch } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
 import { useModulePermissions } from '../hooks/useModulePermissions';
 import { supabase } from '../lib/supabase';
@@ -30,13 +31,20 @@ import { ViewCommunications } from './ViewCommunications';
 import { UploadResource } from './UploadResource';
 import { DirectMessages } from './DirectMessages';
 import { YankeesTickets } from './YankeesTickets';
+import { ProspectRequests } from './ProspectRequests';
+import { MyProspectRequests } from './MyProspectRequests';
+import { BudgetManagement } from './BudgetManagement';
+import { ContactBudgetRequests } from './ContactBudgetRequests';
+import { MyBudgetRequests } from './MyBudgetRequests';
+import { FileViewer } from './FileViewer';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer';
 
 export function Dashboard() {
-  const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user } = useAuth();
+  const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user, refreshSalesPerson, chatEnabled } = useAuth();
   const { isMobile, isTablet } = useDeviceDetection();
   const { hasAccess, loading: permissionsLoading } = useModulePermissions(user?.id, salesPerson?.id || null);
+  const dialog = useDialog();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -50,8 +58,29 @@ export function Dashboard() {
   const [outOfOfficeStatuses, setOutOfOfficeStatuses] = useState<Record<string, { user_id: string; is_enabled: boolean; status_type: string; custom_message: string | null; end_time: string | null }>>({});
   const [myOOOStatus, setMyOOOStatus] = useState<{ is_enabled: boolean; status_type: string; custom_message: string | null; end_time: string | null } | null>(null);
   const [allUsers, setAllUsers] = useState<{ user_id: string; name: string; role: string }[]>([]);
+  const [pendingYankeeCount, setPendingYankeeCount] = useState(0);
+  const [pendingProspectCount, setPendingProspectCount] = useState(0);
+  const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
   const messagesDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!salesPerson?.budget_display_enabled) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshSalesPerson();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    const interval = setInterval(refreshSalesPerson, 30000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(interval);
+    };
+  }, [salesPerson?.budget_display_enabled]);
 
   useEffect(() => {
     if (user && salesPerson) {
@@ -80,7 +109,7 @@ export function Dashboard() {
       .select('id');
 
     if (!isAdminUser) {
-      query = query.or(`recipient_ids.cs.{${user.id}},sent_by.eq.${user.id}`);
+      query = query.or(`recipient_ids.cs.["${user.id}"],sent_by.eq.${user.id}`);
     }
 
     const { data: allComms, error: commsError } = await query;
@@ -143,6 +172,21 @@ export function Dashboard() {
     if (user?.id && hasViewCommunications) {
       fetchUnreadCommunicationsCount();
     }
+  }, [user?.id, hasViewCommunications, fetchUnreadCommunicationsCount]);
+
+  useEffect(() => {
+    if (!user?.id || !hasViewCommunications) return;
+
+    const channel = supabase
+      .channel('comm-unread-badge')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'communication_logs' }, () => {
+        fetchUnreadCommunicationsCount();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user?.id, hasViewCommunications, fetchUnreadCommunicationsCount]);
 
   useEffect(() => {
@@ -217,6 +261,69 @@ export function Dashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const isSuperAdminUser = salesPerson?.role === 'super_admin';
+
+  const fetchPendingYankeeCount = useCallback(async () => {
+    if (!isSuperAdminUser) { setPendingYankeeCount(0); return; }
+    const { count } = await supabase
+      .from('yankees_ticket_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+    setPendingYankeeCount(count || 0);
+  }, [isSuperAdminUser]);
+
+  const fetchPendingProspectCount = useCallback(async () => {
+    if (!isSuperAdminUser) { setPendingProspectCount(0); return; }
+    const { count } = await supabase
+      .from('prospect_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+    setPendingProspectCount(count || 0);
+  }, [isSuperAdminUser]);
+
+  const fetchPendingBudgetRequestCount = useCallback(async () => {
+    if (!isSuperAdminUser) { setPendingBudgetRequestCount(0); return; }
+    const { count } = await supabase
+      .from('contact_budget_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending');
+    setPendingBudgetRequestCount(count || 0);
+  }, [isSuperAdminUser]);
+
+  useEffect(() => {
+    if (!isSuperAdminUser) return;
+    fetchPendingYankeeCount();
+    fetchPendingProspectCount();
+    fetchPendingBudgetRequestCount();
+
+    const yankeeChannel = supabase
+      .channel('yankee-pending-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'yankees_ticket_requests' }, () => {
+        fetchPendingYankeeCount();
+      })
+      .subscribe();
+
+    const prospectChannel = supabase
+      .channel('prospect-pending-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'prospect_requests' }, () => {
+        fetchPendingProspectCount();
+      })
+      .subscribe();
+
+    const budgetRequestChannel = supabase
+      .channel('budget-request-pending-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_budget_requests' }, () => {
+        fetchPendingBudgetRequestCount();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(yankeeChannel);
+      supabase.removeChannel(prospectChannel);
+      supabase.removeChannel(budgetRequestChannel);
+    };
+  }, [isSuperAdminUser, fetchPendingYankeeCount, fetchPendingProspectCount, fetchPendingBudgetRequestCount]);
+
   const getOOOStatusInfo = (statusType: string) => {
     const statusConfig: Record<string, { icon: typeof Clock; label: string; color: string }> = {
       lunch: { icon: Coffee, label: 'At Lunch', color: 'bg-amber-100 text-amber-800' },
@@ -270,6 +377,9 @@ export function Dashboard() {
     { id: 'resources' as Tab, label: 'Resources', icon: FileText, module: 'resources', color: 'text-slate-600' },
     { id: 'direct-messages' as Tab, label: 'Direct Messages', icon: MessageCircle, module: 'direct_messages', color: 'text-blue-600' },
     { id: 'yankees-tickets' as Tab, label: 'Yankees Tickets', icon: Ticket, module: 'yankees_tickets', color: 'text-slate-700' },
+    { id: 'my-prospect-requests' as Tab, label: 'My Prospect Requests', icon: UserPlus, module: 'my_prospect_requests', color: 'text-cyan-600' },
+    { id: 'my-budget-requests' as Tab, label: 'My Friends and Family', icon: DollarSign, module: 'my_budget_requests', color: 'text-emerald-600' },
+    { id: 'file-viewer' as Tab, label: 'File Viewer', icon: FileSearch, module: 'file_viewer', color: 'text-blue-600' },
   ];
 
   // Administrative tabs that will be in the dropdown
@@ -284,11 +394,20 @@ export function Dashboard() {
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
     { id: 'upload-resource' as Tab, label: 'Upload Resource', icon: Upload, module: 'upload_resource', color: 'text-rose-600' },
     { id: 'import' as Tab, label: 'Batch Import Contact Data', icon: Upload, module: 'import_data', color: 'text-violet-600' },
+    { id: 'prospect-requests' as Tab, label: 'Prospect Requests', icon: UserPlus, module: 'prospect_requests', color: 'text-cyan-600' },
+    { id: 'budget-requests' as Tab, label: 'Friends and Family', icon: DollarSign, module: 'budget_requests', color: 'text-emerald-600' },
+    { id: 'budget-management' as Tab, label: 'Budget Management', icon: DollarSign, module: 'budget_edit', color: 'text-emerald-600' },
   ];
 
   const regularTabs = permissionsLoading ? [] : allRegularTabs.filter(tab => {
     if (tab.id === 'wires') {
       return hasAccess('verify_wires') || hasAccess('incoming_wires');
+    }
+    if (tab.id === 'my-budget-requests') {
+      return salesPerson?.friends_family_enabled && hasAccess(tab.module);
+    }
+    if (tab.id === 'file-viewer') {
+      return salesPerson?.file_viewer_enabled;
     }
     return hasAccess(tab.module);
   });
@@ -376,7 +495,7 @@ export function Dashboard() {
 
       if (error) throw error;
 
-      alert('Password updated successfully!');
+      await dialog.alert('Password updated successfully!');
       setShowPasswordModal(false);
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } catch (error: any) {
@@ -396,7 +515,8 @@ export function Dashboard() {
                 <img
                   src="/Copy_of_Copy_of_Evident_Logo_26_(3).png"
                   alt="Evident Title Agency Logo"
-                  className={`${isMobile ? 'h-16' : 'h-20'} object-contain border-2 border-slate-300 rounded-lg p-2`}
+                  className={`${isMobile ? 'h-16' : 'h-20'} object-contain border-2 border-slate-300 rounded-lg p-2 cursor-pointer`}
+                  onClick={() => setActiveTab('search')}
                 />
                 <div className={`flex flex-col gap-1 ${isMobile ? 'mt-0' : ''}`}>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -417,6 +537,12 @@ export function Dashboard() {
                   <p className={`text-slate-500 whitespace-nowrap ${isMobile ? 'text-xs' : 'text-sm'}`}>
                     {getCurrentDate()}
                   </p>
+                  {salesPerson?.budget_display_enabled && (
+                    <p className={`text-slate-600 font-medium flex items-center gap-1 ${isMobile ? 'text-xs' : 'text-sm'}`}>
+                      <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                      Budget: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(salesPerson.budget ?? 0)}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -425,7 +551,7 @@ export function Dashboard() {
                 <div className="relative">
                   <Announcements onNavigateToAnnouncements={() => setActiveTab('announcements')} />
                 </div>
-                {hasAccess('direct_messages') && (
+                {chatEnabled && hasAccess('direct_messages') && (
                   <div className="relative" ref={messagesDropdownRef}>
                     <button
                       onClick={() => setShowMessagesDropdown(!showMessagesDropdown)}
@@ -617,6 +743,7 @@ export function Dashboard() {
                     </div>
                     {adminTabs.map((tab) => {
                       const Icon = tab.icon;
+                      const adminBadge = tab.id === 'prospect-requests' ? pendingProspectCount : tab.id === 'budget-requests' ? pendingBudgetRequestCount : 0;
                       return (
                         <button
                           key={tab.id}
@@ -634,6 +761,11 @@ export function Dashboard() {
                         >
                           <Icon className={`${isMobile ? 'w-5 h-5' : 'w-5 h-5'} ${activeTab === tab.id ? 'text-rose-600' : tab.color}`} />
                           <span className="text-left flex-1">{tab.label}</span>
+                          {adminBadge > 0 && (
+                            <span className="bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] px-1 flex items-center justify-center">
+                              {adminBadge}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
@@ -666,12 +798,15 @@ export function Dashboard() {
             {regularTabs.map((tab) => {
               const Icon = tab.icon;
               const mobileLabel = tab.label.split(' ')[0];
+              const badgeCount = tab.id === 'yankees-tickets' ? pendingYankeeCount
+                : tab.id === 'my-prospect-requests' ? pendingProspectCount
+                : 0;
               return (
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
                   title={tab.label}
-                  className={`flex items-center font-medium whitespace-nowrap transition-all rounded-lg border ${
+                  className={`relative flex items-center font-medium whitespace-nowrap transition-all rounded-lg border ${
                     isMobile ? 'gap-1 px-2.5 py-2 text-xs' : 'gap-2 px-4 py-2.5 text-sm'
                   } ${
                     activeTab === tab.id
@@ -681,6 +816,11 @@ export function Dashboard() {
                 >
                   <Icon className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5'} ${activeTab === tab.id ? 'text-white' : tab.color}`} />
                   <span className={isMobile ? 'text-xs' : ''}>{isMobile ? mobileLabel : tab.label}</span>
+                  {badgeCount > 0 && (
+                    <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full h-5 min-w-[20px] px-1 flex items-center justify-center">
+                      {badgeCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -689,7 +829,7 @@ export function Dashboard() {
       </nav>
 
       <main className={`max-w-7xl mx-auto ${isMobile ? 'px-3 py-4' : 'px-6 lg:px-8 py-8'}`}>
-        {activeTab === 'mycontacts' && hasAccess('my_contacts') && <MyContacts />}
+        {activeTab === 'mycontacts' && hasAccess('my_contacts') && <MyContacts onNavigateToBudgetRequests={salesPerson?.friends_family_enabled ? () => setActiveTab('my-budget-requests') : undefined} />}
         {activeTab === 'search' && hasAccess('contact_search') && <ContactSearch />}
         {activeTab === 'conflict' && hasAccess('conflict_check') && <ConflictCheck />}
         {activeTab === 'add' && hasAccess('add_prospect') && <AddProspect />}
@@ -707,10 +847,16 @@ export function Dashboard() {
         {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
         {activeTab === 'upload-resource' && hasAccess('upload_resource') && <UploadResource />}
-        {activeTab === 'direct-messages' && hasAccess('direct_messages') && <DirectMessages />}
+        {activeTab === 'direct-messages' && chatEnabled && hasAccess('direct_messages') && <DirectMessages />}
         {activeTab === 'audit' && hasAccess('audit_log') && <AuditLog />}
         {activeTab === 'admin' && hasAccess('admin_panel') && <AdminPanel />}
         {activeTab === 'yankees-tickets' && <YankeesTickets />}
+        {activeTab === 'prospect-requests' && hasAccess('prospect_requests') && <ProspectRequests />}
+        {activeTab === 'my-prospect-requests' && hasAccess('my_prospect_requests') && <MyProspectRequests />}
+        {activeTab === 'budget-management' && hasAccess('budget_edit') && <BudgetManagement />}
+        {activeTab === 'budget-requests' && hasAccess('budget_requests') && <ContactBudgetRequests />}
+        {activeTab === 'my-budget-requests' && salesPerson?.friends_family_enabled && hasAccess('my_budget_requests') && <MyBudgetRequests />}
+        {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewer />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

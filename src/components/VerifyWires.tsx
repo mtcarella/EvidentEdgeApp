@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, Edit2, Trash2, X, Save } from 'lucide-react';
+import { FileCheck, Search, Plus, Download, History as HistoryIcon, AlertCircle, CheckCircle, Eye, Database, CreditCard as Edit2, Trash2, X, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import { formatDateForDisplay, nowInEST } from '../lib/dateUtils';
 
 interface VerifiedWire {
@@ -42,6 +43,7 @@ type ViewMode = 'search' | 'add' | 'logs' | 'manage';
 
 export function VerifyWires() {
   const { user, userProfile } = useAuth();
+  const dialog = useDialog();
   const [viewMode, setViewMode] = useState<ViewMode>('search');
   const [loading, setLoading] = useState(false);
 
@@ -143,37 +145,37 @@ export function VerifyWires() {
 
   const handleSearch = async () => {
     if (!fileNumber || !routingNumber || !accountNumber || !reasonForWire) {
-      alert('Please fill in File Number, Routing Number, Account Number, and Reason for Wire');
+      await dialog.alert('Please fill in File Number, Routing Number, Account Number, and Reason for Wire');
       return;
     }
 
     // Validate conditional fields based on reason
     if (reasonForWire === 'seller_proceeds' && (!propertyAddress || !sellerName)) {
-      alert('Please fill in Property Address and Seller Name for Seller Proceeds');
+      await dialog.alert('Please fill in Property Address and Seller Name for Seller Proceeds');
       return;
     }
     if (reasonForWire === 'payoff' && (!loanNumber || !propertyAddress)) {
-      alert('Please fill in Loan Number and Property Address for Payoff');
+      await dialog.alert('Please fill in Loan Number and Property Address for Payoff');
       return;
     }
     if (reasonForWire === 'commission' && (!propertyAddress || !agentType)) {
-      alert('Please fill in Property Address and Agent Type for Commission');
+      await dialog.alert('Please fill in Property Address and Agent Type for Commission');
       return;
     }
     if (reasonForWire === 'brokerage_account' && !furtherCreditTo) {
-      alert('Please fill in Further Credit To for Brokerage Account');
+      await dialog.alert('Please fill in Further Credit To for Brokerage Account');
       return;
     }
     if (reasonForWire === 'returned_wire' && (!borrowerName || !propertyAddress || !loanNumber)) {
-      alert('Please fill in Borrower Name, Property Address, and Loan Number for Returned Wire');
+      await dialog.alert('Please fill in Borrower Name, Property Address, and Loan Number for Returned Wire');
       return;
     }
     if (reasonForWire === 'returned_deposit' && (!propertyAddress || !buyerName)) {
-      alert('Please fill in Property Address and Buyer Name for Returned Deposit');
+      await dialog.alert('Please fill in Property Address and Buyer Name for Returned Deposit');
       return;
     }
     if (reasonForWire === 'buyer_excess_funds' && (!propertyAddress || !buyerName)) {
-      alert('Please fill in Property Address and Buyer Name for Buyer Excess Funds');
+      await dialog.alert('Please fill in Property Address and Buyer Name for Buyer Excess Funds');
       return;
     }
 
@@ -216,7 +218,7 @@ export function VerifyWires() {
         setLogsRefreshTrigger(prev => prev + 1);
       }
     } catch (error) {
-      alert('An error occurred during search');
+      await dialog.alert('An error occurred during search');
     } finally {
       setLoading(false);
     }
@@ -380,7 +382,7 @@ TRANSFER INFORMATION
 
   const handleAddWire = async () => {
     if (!newWire.bank_name || !newWire.routing_number || !newWire.account_number || !newWire.approved_by || !newWire.date_approved) {
-      alert('Please fill in all required fields');
+      await dialog.alert('Please fill in all required fields');
       return;
     }
 
@@ -397,9 +399,9 @@ TRANSFER INFORMATION
       });
 
       if (error) {
-        alert('Failed to add verified wire');
+        await dialog.alert('Failed to add verified wire');
       } else {
-        alert('Verified wire added successfully');
+        await dialog.alert('Verified wire added successfully');
         setNewWire({
           bank_name: '',
           routing_number: '',
@@ -410,7 +412,7 @@ TRANSFER INFORMATION
         });
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }
@@ -463,7 +465,7 @@ TRANSFER INFORMATION
     if (!editFormData || !editingWire) return;
 
     if (!editFormData.bank_name || !editFormData.routing_number || !editFormData.account_number || !editFormData.approved_by || !editFormData.date_approved) {
-      alert('Please fill in all fields');
+      await dialog.alert('Please fill in all fields');
       return;
     }
 
@@ -482,21 +484,21 @@ TRANSFER INFORMATION
         .eq('id', editingWire.id);
 
       if (error) {
-        alert('Failed to update verified wire');
+        await dialog.alert('Failed to update verified wire');
       } else {
-        alert('Verified wire updated successfully');
+        await dialog.alert('Verified wire updated successfully');
         handleCancelEdit();
         loadAllWires();
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDeleteWire = async (wireId: string, bankName: string) => {
-    if (!confirm(`Are you sure you want to delete the verified wire for ${bankName}? This action cannot be undone.`)) {
+    if (!(await dialog.confirm(`Are you sure you want to delete the verified wire for ${bankName}? This action cannot be undone.`))) {
       return;
     }
 
@@ -508,13 +510,13 @@ TRANSFER INFORMATION
         .eq('id', wireId);
 
       if (error) {
-        alert('Failed to delete verified wire');
+        await dialog.alert('Failed to delete verified wire');
       } else {
-        alert('Verified wire deleted successfully');
+        await dialog.alert('Verified wire deleted successfully');
         loadAllWires();
       }
     } catch (error) {
-      alert('An error occurred');
+      await dialog.alert('An error occurred');
     } finally {
       setLoading(false);
     }

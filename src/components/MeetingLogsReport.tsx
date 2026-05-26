@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight } from 'lucide-react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString, getESTToday, formatDateWithWeekday, formatDateShort } from '../lib/dateUtils';
 import { convertToJpeg, isImageFile } from '../lib/imageUtils';
+import { adjustBudget, restoreBudget, formatCurrency } from '../lib/budgetUtils';
 
 interface MeetingReceipt {
   id: string;
@@ -51,6 +53,7 @@ interface SalesPerson {
 
 export function MeetingLogsReport() {
   const { salesPerson, isAdmin } = useAuth();
+  const dialog = useDialog();
   const [meetings, setMeetings] = useState<MeetingLog[]>([]);
   const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
   const [loading, setLoading] = useState(false);
@@ -76,6 +79,7 @@ export function MeetingLogsReport() {
   const [previewReceiptFilename, setPreviewReceiptFilename] = useState<string | null>(null);
   const [previewMeetingInfo, setPreviewMeetingInfo] = useState<{ contactName: string; date: string } | null>(null);
   const [expandedSalespeople, setExpandedSalespeople] = useState<Set<string>>(new Set());
+  const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
 
   const closePreviewModal = () => {
     if (previewReceiptUrl) {
@@ -157,14 +161,14 @@ export function MeetingLogsReport() {
 
       if (error) {
         console.error('Error loading meetings:', error);
-        alert('Failed to load meetings');
+        await dialog.alert('Failed to load meetings');
         return;
       }
 
       setMeetings(data || []);
     } catch (error) {
       console.error('Error loading meetings:', error);
-      alert('Failed to load meetings');
+      await dialog.alert('Failed to load meetings');
     } finally {
       setLoading(false);
     }
@@ -252,7 +256,7 @@ export function MeetingLogsReport() {
 
       if (error) {
         console.error('Error updating meeting:', error);
-        alert('Failed to update meeting');
+        await dialog.alert('Failed to update meeting');
         return;
       }
 
@@ -273,20 +277,32 @@ export function MeetingLogsReport() {
         }
       }
 
+      const oldExpenseAmount = (editingMeeting.has_expense && editingMeeting.expense_amount) ? editingMeeting.expense_amount : 0;
+      const newExpenseAmount = (editFormData.has_expense && editFormData.expense_amount) ? parseFloat(editFormData.expense_amount) : 0;
+      if (oldExpenseAmount !== newExpenseAmount) {
+        const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount);
+        if (result.exceeded && result.newBalance !== null) {
+          setBudgetWarning(`Budget exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setTimeout(() => setBudgetWarning(null), 8000);
+        }
+      }
+
       setEditingMeeting(null);
       loadMeetings();
     } catch (error) {
       console.error('Error updating meeting:', error);
-      alert('Failed to update meeting');
+      await dialog.alert('Failed to update meeting');
     }
   };
 
   const handleDeleteClick = async (meeting: MeetingLog) => {
-    if (!confirm(`Are you sure you want to delete this meeting with ${meeting.contact.name}?`)) {
+    if (!(await dialog.confirm(`Are you sure you want to delete this meeting with ${meeting.contact.name}?`))) {
       return;
     }
 
     try {
+      const expenseToRestore = (meeting.has_expense && meeting.expense_amount) ? meeting.expense_amount : 0;
+
       const { error } = await supabase
         .from('meetings')
         .delete()
@@ -294,14 +310,18 @@ export function MeetingLogsReport() {
 
       if (error) {
         console.error('Error deleting meeting:', error);
-        alert('Failed to delete meeting');
+        await dialog.alert('Failed to delete meeting');
         return;
+      }
+
+      if (expenseToRestore > 0) {
+        await restoreBudget(meeting.salesperson_id, expenseToRestore);
       }
 
       loadMeetings();
     } catch (error) {
       console.error('Error deleting meeting:', error);
-      alert('Failed to delete meeting');
+      await dialog.alert('Failed to delete meeting');
     }
   };
 
@@ -316,7 +336,7 @@ export function MeetingLogsReport() {
 
       if (error) {
         console.error('Error downloading receipt:', error);
-        alert('Failed to load receipt. Please try again.');
+        await dialog.alert('Failed to load receipt. Please try again.');
         return;
       }
 
@@ -336,7 +356,7 @@ export function MeetingLogsReport() {
       }
     } catch (error) {
       console.error('Error loading receipt:', error);
-      alert('Failed to load receipt. Please try again.');
+      await dialog.alert('Failed to load receipt. Please try again.');
     }
   };
 
@@ -352,9 +372,9 @@ export function MeetingLogsReport() {
     );
   });
 
-  const exportToExcel = () => {
+  const exportToExcel = async () => {
     if (filteredMeetings.length === 0) {
-      alert('No meetings to export');
+      await dialog.alert('No meetings to export');
       return;
     }
 
@@ -408,7 +428,7 @@ export function MeetingLogsReport() {
     );
 
     if (meetingsWithReceipts.length === 0) {
-      alert('No receipts found in the selected date range');
+      await dialog.alert('No receipts found in the selected date range');
       return;
     }
 
@@ -464,7 +484,7 @@ export function MeetingLogsReport() {
       }
 
       if (successCount === 0) {
-        alert('Failed to download any receipts. Please try again.');
+        await dialog.alert('Failed to download any receipts. Please try again.');
         return;
       }
 
@@ -479,13 +499,13 @@ export function MeetingLogsReport() {
       URL.revokeObjectURL(url);
 
       if (failCount > 0) {
-        alert(`Successfully downloaded ${successCount} receipt(s). ${failCount} receipt(s) failed to download.`);
+        await dialog.alert(`Successfully downloaded ${successCount} receipt(s). ${failCount} receipt(s) failed to download.`);
       } else {
-        alert(`Successfully downloaded ${successCount} receipt(s).`);
+        await dialog.alert(`Successfully downloaded ${successCount} receipt(s).`);
       }
     } catch (error) {
       console.error('Error exporting receipts:', error);
-      alert('Failed to export receipts. Please try again.');
+      await dialog.alert('Failed to export receipts. Please try again.');
     }
   };
 
@@ -537,6 +557,15 @@ export function MeetingLogsReport() {
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+      {budgetWarning && (
+        <div className="flex items-center gap-3 p-3 mx-6 mt-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <span className="text-sm font-medium text-amber-800">{budgetWarning}</span>
+          <button onClick={() => setBudgetWarning(null)} className="ml-auto p-1 hover:bg-amber-100 rounded">
+            <X className="w-4 h-4 text-amber-600" />
+          </button>
+        </div>
+      )}
       <div className="px-6 py-4 border-b border-slate-200 bg-gradient-to-r from-blue-50 to-slate-50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
