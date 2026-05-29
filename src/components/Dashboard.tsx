@@ -37,6 +37,7 @@ import { BudgetManagement } from './BudgetManagement';
 import { ContactBudgetRequests } from './ContactBudgetRequests';
 import { MyBudgetRequests } from './MyBudgetRequests';
 import { FileViewer } from './FileViewer';
+import { FileViewerModule } from './FileViewer/FileViewerModule';
 
 type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer';
 
@@ -106,7 +107,8 @@ export function Dashboard() {
 
     let query = supabase
       .from('communication_logs')
-      .select('id');
+      .select('id')
+      .is('reply_to_message_id', null);
 
     if (!isAdminUser) {
       query = query.or(`recipient_ids.cs.["${user.id}"],sent_by.eq.${user.id}`);
@@ -180,6 +182,9 @@ export function Dashboard() {
     const channel = supabase
       .channel('comm-unread-badge')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'communication_logs' }, () => {
+        fetchUnreadCommunicationsCount();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'communication_reads' }, () => {
         fetchUnreadCommunicationsCount();
       })
       .subscribe();
@@ -856,7 +861,7 @@ export function Dashboard() {
         {activeTab === 'budget-management' && hasAccess('budget_edit') && <BudgetManagement />}
         {activeTab === 'budget-requests' && hasAccess('budget_requests') && <ContactBudgetRequests />}
         {activeTab === 'my-budget-requests' && salesPerson?.friends_family_enabled && hasAccess('my_budget_requests') && <MyBudgetRequests />}
-        {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewer />}
+        {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewerModule />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

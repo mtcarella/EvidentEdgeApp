@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { Mail, MessageSquare, Search, Clock, Users, Send, X, AlertCircle, Trash2, Paperclip, Reply, FileText, Download, Image, File, ChevronLeft } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Mail, MessageSquare, Search, Clock, Users, Send, X, AlertCircle, Trash2, Paperclip, Reply, FileText, Download, Image, File, ChevronLeft, ArrowUpDown, Circle, CheckCheck, Eye, EyeOff } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
 import ContactExecutive from './ContactExecutive';
+import { ThreadManagement } from './ThreadManagement';
 
 interface User {
   id: string;
@@ -57,7 +58,7 @@ interface PendingFile {
   type: string;
 }
 
-type Tab = 'send' | 'inbox' | 'thread';
+type Tab = 'send' | 'inbox' | 'thread' | 'managed';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ACCEPTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -112,10 +113,15 @@ export function ViewCommunications() {
   // Reply state
   const [replyToMessage, setReplyToMessage] = useState<CommunicationLog | null>(null);
 
+  // Read/unread tracking
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const markAsReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Thread view state
   const [threadParent, setThreadParent] = useState<CommunicationLog | null>(null);
   const [threadMessages, setThreadMessages] = useState<CommunicationLog[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
+  const [threadReturnTab, setThreadReturnTab] = useState<'inbox' | 'managed'>('inbox');
   const [threadReplyMessage, setThreadReplyMessage] = useState('');
   const [threadPendingFiles, setThreadPendingFiles] = useState<PendingFile[]>([]);
   const [threadSending, setThreadSending] = useState(false);
@@ -126,6 +132,7 @@ export function ViewCommunications() {
     fetchCommunications();
     fetchUsers();
     fetchUserGroups();
+    fetchReadIds();
   }, [user?.id, salesPerson?.role]);
 
   useEffect(() => {
@@ -145,6 +152,9 @@ export function ViewCommunications() {
           loadThread(threadParent.id);
         }
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'communication_reads' }, () => {
+        fetchReadIds();
+      })
       .subscribe();
 
     return () => {
@@ -152,10 +162,32 @@ export function ViewCommunications() {
     };
   }, [user?.id, threadParent?.id]);
 
+  useEffect(() => {
+    return () => {
+      if (markAsReadTimerRef.current) {
+        clearTimeout(markAsReadTimerRef.current);
+      }
+    };
+  }, []);
+
+  const fetchReadIds = async () => {
+    if (!user?.id) return;
+    const { data } = await supabase
+      .from('communication_reads')
+      .select('communication_id')
+      .eq('user_id', user.id);
+    if (data) {
+      setReadIds(new Set(data.map(r => r.communication_id)));
+    }
+  };
+
   const markCommunicationsAsRead = async (commIds: string[]) => {
     if (!user?.id || commIds.length === 0) return;
 
-    const inserts = commIds.map(commId => ({
+    const unreadIds = commIds.filter(id => !readIds.has(id));
+    if (unreadIds.length === 0) return;
+
+    const inserts = unreadIds.map(commId => ({
       communication_id: commId,
       user_id: user.id
     }));
@@ -163,6 +195,37 @@ export function ViewCommunications() {
     await supabase
       .from('communication_reads')
       .upsert(inserts, { onConflict: 'communication_id,user_id', ignoreDuplicates: true });
+
+    setReadIds(prev => {
+      const next = new Set(prev);
+      unreadIds.forEach(id => next.add(id));
+      return next;
+    });
+  };
+
+  const markAsUnread = async (commId: string) => {
+    if (!user?.id) return;
+    await supabase
+      .from('communication_reads')
+      .delete()
+      .eq('communication_id', commId)
+      .eq('user_id', user.id);
+
+    setReadIds(prev => {
+      const next = new Set(prev);
+      next.delete(commId);
+      return next;
+    });
+  };
+
+  const markAllAsRead = async () => {
+    if (!user?.id) return;
+    const unreadComms = communications.filter(c => {
+      const deletedBy = c.deleted_by_user || [];
+      return !readIds.has(c.id) && !deletedBy.includes(user.id);
+    });
+    if (unreadComms.length === 0) return;
+    await markCommunicationsAsRead(unreadComms.map(c => c.id));
   };
 
   const fetchCommunications = async () => {
@@ -212,9 +275,9 @@ export function ViewCommunications() {
           .select('*')
           .eq('communication_id', log.id);
 
-        const { count: replyCount } = await supabase
+        const { data: replyData } = await supabase
           .from('communication_logs')
-          .select('id', { count: 'exact', head: true })
+          .select('id')
           .eq('reply_to_message_id', log.id);
 
         return {
@@ -222,23 +285,14 @@ export function ViewCommunications() {
           sender_name: senderData?.name || 'Unknown',
           group_name: groupName,
           attachments: attachments || [],
-          _replyCount: replyCount || 0
+          _replyCount: replyData?.length || 0,
+          _replyIds: replyData?.map(r => r.id) || []
         };
       })
     );
 
     setCommunications(logsWithDetails);
     setLoading(false);
-
-    const visibleLogs = logsWithDetails.filter(log => {
-      const deletedBy = log.deleted_by_user || [];
-      return !deletedBy.includes(user.id);
-    });
-
-    if (visibleLogs.length > 0) {
-      const commIds = visibleLogs.map(log => log.id);
-      markCommunicationsAsRead(commIds);
-    }
   };
 
   const loadThread = async (parentId: string) => {
@@ -307,7 +361,15 @@ export function ViewCommunications() {
 
   const openThread = (comm: CommunicationLog) => {
     loadThread(comm.id);
+    setThreadReturnTab('inbox');
     setActiveTab('thread');
+
+    if (markAsReadTimerRef.current) {
+      clearTimeout(markAsReadTimerRef.current);
+    }
+    markAsReadTimerRef.current = setTimeout(() => {
+      markCommunicationsAsRead([comm.id]);
+    }, 2000);
   };
 
   const handleDeleteMessage = async (messageId: string) => {
@@ -903,11 +965,11 @@ export function ViewCommunications() {
     return (
       <div className="space-y-4">
         <button
-          onClick={() => { setActiveTab('inbox'); setThreadParent(null); setThreadMessages([]); }}
+          onClick={() => { setActiveTab(threadReturnTab); setThreadParent(null); setThreadMessages([]); setThreadReturnTab('inbox'); }}
           className="flex items-center gap-2 text-blue-600 hover:text-blue-800 font-medium text-sm mb-4"
         >
           <ChevronLeft className="w-4 h-4" />
-          Back to Inbox
+          {threadReturnTab === 'managed' ? 'Back to Threads' : 'Back to Inbox'}
         </button>
 
         <div className="border-b border-gray-200 pb-4 mb-4">
@@ -921,6 +983,17 @@ export function ViewCommunications() {
 
         {/* Thread messages */}
         <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+          {/* Unread reply summary */}
+          {(() => {
+            const unreadCount = threadMessages.filter(r => !readIds.has(r.id)).length;
+            return unreadCount > 0 ? (
+              <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                <Circle className="w-2.5 h-2.5 fill-blue-500 text-blue-500" />
+                <span className="font-medium text-blue-700">{unreadCount} unread {unreadCount === 1 ? 'reply' : 'replies'}</span>
+              </div>
+            ) : null;
+          })()}
+
           {/* Parent message */}
           <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -934,19 +1007,17 @@ export function ViewCommunications() {
           {/* Replies */}
           {threadMessages.map((reply) => {
             const isSelf = reply.sent_by === user?.id;
+            const isReplyUnread = !readIds.has(reply.id);
             return (
-              <div
+              <ReplyItem
                 key={reply.id}
-                className={`ml-6 border rounded-lg p-4 ${isSelf ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-white'}`}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <Reply className="w-3 h-3 text-gray-400" />
-                  <span className="font-semibold text-gray-900 text-sm">{reply.sender_name}</span>
-                  <span className="text-xs text-gray-500">{formatDate(reply.sent_at)}</span>
-                </div>
-                <p className="text-gray-700 whitespace-pre-wrap text-sm">{reply.message}</p>
-                {renderAttachments(reply.attachments)}
-              </div>
+                reply={reply}
+                isSelf={isSelf}
+                isUnread={isReplyUnread}
+                onRead={() => markCommunicationsAsRead([reply.id])}
+                formatDate={formatDate}
+                renderAttachments={renderAttachments}
+              />
             );
           })}
         </div>
@@ -1074,6 +1145,19 @@ export function ViewCommunications() {
               <div className="flex items-center gap-2">
                 <Send className="w-4 h-4" />
                 Send Message
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('managed')}
+              className={`px-4 py-2 font-medium transition-colors relative ${
+                activeTab === 'managed'
+                  ? 'text-blue-600 border-b-2 border-blue-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <ArrowUpDown className="w-4 h-4" />
+                Threads
               </div>
             </button>
           </div>
@@ -1324,6 +1408,17 @@ export function ViewCommunications() {
           </div>
         )}
 
+        {/* Managed Threads Tab */}
+        {activeTab === 'managed' && (
+          <ThreadManagement
+            onThreadSelect={(threadId) => {
+              loadThread(threadId);
+              setThreadReturnTab('managed');
+              setActiveTab('thread');
+            }}
+          />
+        )}
+
         {/* Inbox Tab */}
         {activeTab === 'inbox' && (
           <>
@@ -1389,6 +1484,28 @@ export function ViewCommunications() {
               </div>
             )}
 
+            {/* Unread Actions Bar */}
+            {(() => {
+              const unreadCount = communications.filter(c => {
+                const deletedBy = c.deleted_by_user || [];
+                return !readIds.has(c.id) && (!user?.id || !deletedBy.includes(user.id));
+              }).length;
+              return unreadCount > 0 ? (
+                <div className="mb-4 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+                  <span className="text-sm font-medium text-blue-700">
+                    {unreadCount} unread message{unreadCount !== 1 ? 's' : ''}
+                  </span>
+                  <button
+                    onClick={markAllAsRead}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors"
+                  >
+                    <CheckCheck className="w-4 h-4" />
+                    Mark All as Read
+                  </button>
+                </div>
+              ) : null;
+            })()}
+
             {/* Communications List */}
             {loading ? (
               <div className="text-center py-12">
@@ -1401,24 +1518,35 @@ export function ViewCommunications() {
                 <p className="text-gray-600">No communications found</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {filteredCommunications.map((comm) => {
                   const deletedBy = comm.deleted_by_user || [];
                   const isDeleted = user?.id ? deletedBy.includes(user.id) : false;
                   const hasAnyDeletions = deletedBy.length > 0;
                   const replyCount = (comm as CommunicationLog & { _replyCount?: number })._replyCount || 0;
+                  const replyIds = (comm as CommunicationLog & { _replyIds?: string[] })._replyIds || [];
+                  const unreadReplyCount = replyIds.filter(id => !readIds.has(id)).length;
+                  const isUnread = !readIds.has(comm.id);
 
                   return (
                     <div
                       key={comm.id}
-                      className={`border rounded-lg p-3 sm:p-4 transition-colors w-full group ${
+                      className={`border rounded-lg p-3 sm:p-4 transition-all w-full group ${
                         isDeleted
                           ? 'border-red-200 bg-red-50'
-                          : 'border-gray-200 hover:border-blue-300'
+                          : isUnread
+                            ? 'border-l-4 border-l-blue-500 border-t border-r border-b border-blue-200 bg-blue-50/40 hover:bg-blue-50/70 shadow-sm'
+                            : 'border-gray-200 bg-white hover:border-gray-300'
                       }`}
                     >
                       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-0 mb-2">
                         <div className="flex items-start gap-2 sm:gap-3 min-w-0 flex-1">
+                          {/* Unread dot indicator */}
+                          {isUnread && !isDeleted && (
+                            <div className="flex-shrink-0 mt-2">
+                              <Circle className="w-2.5 h-2.5 fill-blue-500 text-blue-500" />
+                            </div>
+                          )}
                           <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${
                             comm.communication_type === 'email'
                               ? 'bg-blue-100 text-blue-600'
@@ -1432,7 +1560,7 @@ export function ViewCommunications() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-                              <span className="font-semibold text-gray-900 text-sm sm:text-base">
+                              <span className={`text-sm sm:text-base ${isUnread ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
                                 {comm.sender_name}
                               </span>
                               {comm.recipient_type === 'group' && comm.group_name && (
@@ -1456,6 +1584,20 @@ export function ViewCommunications() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
+                          {/* Mark as read/unread toggle */}
+                          {!isDeleted && (
+                            <button
+                              onClick={() => isUnread ? markCommunicationsAsRead([comm.id]) : markAsUnread(comm.id)}
+                              className="p-1.5 sm:p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                              title={isUnread ? 'Mark as read' : 'Mark as unread'}
+                            >
+                              {isUnread ? (
+                                <Eye className="w-4 h-4 sm:w-5 sm:h-5" />
+                              ) : (
+                                <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" />
+                              )}
+                            </button>
+                          )}
                           {/* Reply button */}
                           {!isDeleted && (
                             <button
@@ -1485,10 +1627,10 @@ export function ViewCommunications() {
                       </div>
 
                       {comm.subject && (
-                        <h3 className="font-semibold text-gray-900 mb-2 text-sm sm:text-base break-words">{comm.subject}</h3>
+                        <h3 className={`mb-2 text-sm sm:text-base break-words ${isUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-800'}`}>{comm.subject}</h3>
                       )}
 
-                      <p className="text-gray-700 whitespace-pre-wrap text-sm sm:text-base break-words">{comm.message}</p>
+                      <p className={`whitespace-pre-wrap text-sm sm:text-base break-words ${isUnread ? 'text-gray-800' : 'text-gray-600'}`}>{comm.message}</p>
 
                       {renderAttachments(comm.attachments)}
 
@@ -1500,6 +1642,11 @@ export function ViewCommunications() {
                         >
                           <MessageSquare className="w-4 h-4" />
                           {replyCount} {replyCount === 1 ? 'reply' : 'replies'} - View thread
+                          {unreadReplyCount > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-blue-600 text-white text-xs font-bold rounded-full">
+                              {unreadReplyCount} unread
+                            </span>
+                          )}
                         </button>
                       )}
 
@@ -1520,6 +1667,87 @@ export function ViewCommunications() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+interface ReplyItemProps {
+  reply: {
+    id: string;
+    sent_by: string;
+    sender_name?: string;
+    sent_at: string;
+    message: string;
+    attachments?: unknown[];
+  };
+  isSelf: boolean;
+  isUnread: boolean;
+  onRead: () => void;
+  formatDate: (date: string) => string;
+  renderAttachments: (attachments: unknown[] | undefined) => React.ReactNode;
+}
+
+function ReplyItem({ reply, isSelf, isUnread, onRead, formatDate, renderAttachments }: ReplyItemProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onReadRef = useRef(onRead);
+  onReadRef.current = onRead;
+
+  useEffect(() => {
+    if (!isUnread || !ref.current) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          timerRef.current = setTimeout(() => {
+            onReadRef.current();
+          }, 3000);
+        } else {
+          if (timerRef.current) {
+            clearTimeout(timerRef.current);
+            timerRef.current = null;
+          }
+        }
+      },
+      { threshold: 0.5 }
+    );
+
+    observer.observe(ref.current);
+
+    return () => {
+      observer.disconnect();
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, [isUnread]);
+
+  return (
+    <div
+      ref={ref}
+      className={`ml-6 border rounded-lg p-4 transition-all ${
+        isUnread
+          ? 'border-l-4 border-l-blue-500 border-t border-r border-b border-blue-200 bg-blue-50/30 shadow-sm'
+          : isSelf
+            ? 'border-green-200 bg-green-50'
+            : 'border-gray-200 bg-white'
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        {isUnread && (
+          <Circle className="w-2 h-2 fill-blue-500 text-blue-500 flex-shrink-0" />
+        )}
+        <Reply className="w-3 h-3 text-gray-400" />
+        <span className={`text-sm ${isUnread ? 'font-bold text-gray-900' : 'font-semibold text-gray-900'}`}>
+          {reply.sender_name}
+        </span>
+        <span className="text-xs text-gray-500">{formatDate(reply.sent_at)}</span>
+        {isUnread && (
+          <span className="ml-auto text-xs font-medium text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">New</span>
+        )}
+      </div>
+      <p className={`whitespace-pre-wrap text-sm ${isUnread ? 'text-gray-900' : 'text-gray-700'}`}>{reply.message}</p>
+      {renderAttachments(reply.attachments)}
     </div>
   );
 }

@@ -194,7 +194,7 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const conversationLink = appUrl || "https://evidentedge.netlify.app";
+    const conversationLink = "https://evidentedge.netlify.app";
 
     const attachmentNotice =
       emailAttachments.length > 0

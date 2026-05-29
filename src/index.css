@@ -30,4 +30,36 @@
       opacity: 1;
     }
   }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  @keyframes scaleIn {
+    from {
+      transform: scale(0.95);
+      opacity: 0;
+    }
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+}
+
+.spreadsheet-preview table {
+  @apply w-full border-collapse text-xs;
+}
+
+.spreadsheet-preview th,
+.spreadsheet-preview td {
+  @apply border border-gray-200 px-3 py-1.5 text-left;
+}
+
+.spreadsheet-preview th {
+  @apply bg-gray-100 font-semibold text-gray-700;
+}
+
+.spreadsheet-preview tr:hover td {
+  @apply bg-blue-50/30;
 }
