@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight, AlertTriangle, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -14,6 +14,7 @@ interface MeetingReceipt {
   file_path: string;
   file_name: string | null;
   created_at: string;
+  created_by: string | null;
 }
 
 interface MeetingLog {
@@ -80,6 +81,13 @@ export function MeetingLogsReport() {
   const [previewMeetingInfo, setPreviewMeetingInfo] = useState<{ contactName: string; date: string } | null>(null);
   const [expandedSalespeople, setExpandedSalespeople] = useState<Set<string>>(new Set());
   const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
+  const [editExistingReceipts, setEditExistingReceipts] = useState<MeetingReceipt[]>([]);
+  const [receiptThumbnails, setReceiptThumbnails] = useState<Record<string, string>>({});
+  const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
+  const [confirmDeleteReceiptId, setConfirmDeleteReceiptId] = useState<string | null>(null);
+  const [isDraggingReceipt, setIsDraggingReceipt] = useState(false);
+  const [uploadingReceipts, setUploadingReceipts] = useState(false);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const closePreviewModal = () => {
     if (previewReceiptUrl) {
@@ -139,7 +147,7 @@ export function MeetingLogsReport() {
           expense_payment_method,
           expense_amount,
           receipt_url,
-          receipts:meeting_receipts(id, file_path, file_name, created_at),
+          receipts:meeting_receipts(id, file_path, file_name, created_at, created_by),
           meeting_group_id,
           is_primary_for_expense,
           contact:contacts(name, type, company, email, phone),
@@ -193,7 +201,93 @@ export function MeetingLogsReport() {
       expense_amount: meeting.expense_amount ? meeting.expense_amount.toString() : '',
       receipt_files: [],
     });
+    setEditExistingReceipts(meeting.receipts || []);
+    setConfirmDeleteReceiptId(null);
+    loadReceiptThumbnails(meeting.receipts || []);
   };
+
+  const loadReceiptThumbnails = async (receipts: MeetingReceipt[]) => {
+    const thumbs: Record<string, string> = {};
+    for (const receipt of receipts) {
+      const ext = receipt.file_path.split('.').pop()?.toLowerCase() || '';
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+        const { data } = await supabase.storage
+          .from('receipts')
+          .createSignedUrl(receipt.file_path, 300);
+        if (data?.signedUrl) {
+          thumbs[receipt.id] = data.signedUrl;
+        }
+      }
+    }
+    setReceiptThumbnails(thumbs);
+  };
+
+  const handleDeleteReceipt = async (receipt: MeetingReceipt) => {
+    setDeletingReceiptId(receipt.id);
+    try {
+      await supabase.storage.from('receipts').remove([receipt.file_path]);
+      await supabase.from('meeting_receipts').delete().eq('id', receipt.id);
+      setEditExistingReceipts(prev => prev.filter(r => r.id !== receipt.id));
+      setReceiptThumbnails(prev => {
+        const next = { ...prev };
+        delete next[receipt.id];
+        return next;
+      });
+    } catch (err) {
+      console.error('Error deleting receipt:', err);
+    } finally {
+      setDeletingReceiptId(null);
+      setConfirmDeleteReceiptId(null);
+    }
+  };
+
+  const handleDropReceipts = useCallback(async (files: File[]) => {
+    if (!editingMeeting || !salesPerson || files.length === 0) return;
+    setUploadingReceipts(true);
+    try {
+      const newReceipts: MeetingReceipt[] = [];
+      for (const file of files) {
+        let uploadFile = file;
+        let fileName = file.name;
+        if (isImageFile(file.name) && !file.name.toLowerCase().endsWith('.pdf')) {
+          const converted = await convertToJpeg(file);
+          if (converted) {
+            uploadFile = converted;
+            fileName = file.name.replace(/\.[^.]+$/, '.jpeg');
+          }
+        }
+        const storageName = `${salesPerson.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileName.split('.').pop()}`;
+        const { error: uploadError } = await supabase.storage
+          .from('receipts')
+          .upload(storageName, uploadFile);
+        if (uploadError) {
+          console.error('Upload error:', uploadError);
+          continue;
+        }
+        const { data: inserted, error: insertError } = await supabase
+          .from('meeting_receipts')
+          .insert({
+            meeting_id: editingMeeting.id,
+            file_path: storageName,
+            file_name: fileName,
+            created_by: salesPerson.user_id,
+          })
+          .select('id, file_path, file_name, created_at, created_by')
+          .maybeSingle();
+        if (!insertError && inserted) {
+          newReceipts.push(inserted);
+        }
+      }
+      if (newReceipts.length > 0) {
+        setEditExistingReceipts(prev => [...prev, ...newReceipts]);
+        loadReceiptThumbnails(newReceipts);
+      }
+    } catch (err) {
+      console.error('Error uploading receipts:', err);
+    } finally {
+      setUploadingReceipts(false);
+    }
+  }, [editingMeeting, salesPerson]);
 
   const handleEditSave = async () => {
     if (!editingMeeting || !salesPerson) return;
@@ -1048,29 +1142,126 @@ export function MeetingLogsReport() {
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
                         />
                       </div>
-                      <div>
-                        <label className="block text-sm font-semibold text-slate-700 mb-2">
-                          <Upload className="w-4 h-4 inline mr-1" />
-                          Add More Receipts
+                      {/* Receipts Management Section */}
+                      <div className="border-t border-slate-200 pt-3">
+                        <label className="block text-sm font-semibold text-slate-700 mb-3">
+                          <FileText className="w-4 h-4 inline mr-1" />
+                          Receipts
                         </label>
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          multiple
-                          onChange={(e) => {
-                            const files = e.target.files;
-                            if (files) {
-                              setEditFormData(prev => ({
-                                ...prev,
-                                receipt_files: [...prev.receipt_files, ...Array.from(files)]
-                              }));
-                            }
+
+                        {/* Existing Receipts List */}
+                        {editExistingReceipts.length > 0 && (
+                          <div className="space-y-2 mb-4">
+                            {editExistingReceipts.map(receipt => (
+                              <div key={receipt.id} className="flex items-center gap-3 p-2 bg-slate-50 border border-slate-200 rounded-lg group">
+                                {/* Thumbnail */}
+                                <div className="w-10 h-10 rounded overflow-hidden bg-slate-200 flex-shrink-0 flex items-center justify-center">
+                                  {receiptThumbnails[receipt.id] ? (
+                                    <img
+                                      src={receiptThumbnails[receipt.id]}
+                                      alt={receipt.file_name || 'Receipt'}
+                                      className="w-full h-full object-cover"
+                                    />
+                                  ) : (
+                                    <FileText className="w-5 h-5 text-slate-400" />
+                                  )}
+                                </div>
+                                {/* File name */}
+                                <span className="text-sm text-slate-700 truncate flex-1" title={receipt.file_name || receipt.file_path}>
+                                  {receipt.file_name || receipt.file_path.split('/').pop() || 'Receipt'}
+                                </span>
+                                {/* Delete button - only for receipts uploaded by current user */}
+                                {(receipt.created_by === salesPerson?.user_id || isAdmin) && (
+                                  <>
+                                    {confirmDeleteReceiptId === receipt.id ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-xs text-slate-500">Delete?</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleDeleteReceipt(receipt)}
+                                          disabled={deletingReceiptId === receipt.id}
+                                          className="text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 transition-colors"
+                                        >
+                                          {deletingReceiptId === receipt.id ? '...' : 'Yes'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setConfirmDeleteReceiptId(null)}
+                                          className="text-xs px-2 py-0.5 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors"
+                                        >
+                                          No
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteReceiptId(receipt.id)}
+                                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                                        title="Delete receipt"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Drag-and-Drop Upload Area */}
+                        <div
+                          ref={dropZoneRef}
+                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingReceipt(true); }}
+                          onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingReceipt(false); }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDraggingReceipt(false);
+                            const files = Array.from(e.dataTransfer.files).filter(
+                              f => f.type.startsWith('image/') || f.type === 'application/pdf'
+                            );
+                            if (files.length > 0) handleDropReceipts(files);
                           }}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-sm"
-                        />
+                          className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${
+                            isDraggingReceipt
+                              ? 'border-blue-400 bg-blue-50'
+                              : 'border-slate-300 hover:border-slate-400 hover:bg-slate-50'
+                          }`}
+                        >
+                          {uploadingReceipts ? (
+                            <div className="flex items-center justify-center gap-2 py-2">
+                              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                              <span className="text-sm text-slate-600">Uploading...</span>
+                            </div>
+                          ) : (
+                            <>
+                              <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
+                              <p className="text-sm text-slate-600">
+                                Drag and drop receipts here
+                              </p>
+                              <p className="text-xs text-slate-400 mt-0.5">or click to browse</p>
+                              <input
+                                type="file"
+                                accept="image/*,.pdf"
+                                multiple
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                onChange={(e) => {
+                                  const files = e.target.files;
+                                  if (files && files.length > 0) {
+                                    handleDropReceipts(Array.from(files));
+                                  }
+                                  e.target.value = '';
+                                }}
+                              />
+                            </>
+                          )}
+                        </div>
+
+                        {/* Pending files from old-style input (kept for compatibility) */}
                         {editFormData.receipt_files.length > 0 && (
                           <div className="mt-2 space-y-1">
-                            <p className="text-xs text-slate-600 font-medium">{editFormData.receipt_files.length} new file(s) to upload:</p>
+                            <p className="text-xs text-slate-600 font-medium">{editFormData.receipt_files.length} pending file(s):</p>
                             {editFormData.receipt_files.map((file, index) => (
                               <div key={index} className="flex items-center justify-between bg-yellow-50 px-2 py-1 rounded text-sm">
                                 <span className="flex items-center gap-1 text-slate-700 truncate">

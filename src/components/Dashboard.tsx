@@ -866,7 +866,7 @@ export function Dashboard() {
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">
         <div className="max-w-7xl mx-auto px-6 lg:px-8">
-          <div className="flex items-center justify-center">
+          <div className="flex items-center justify-center gap-3">
             <button
               onClick={() => setShowSMSOptIn(true)}
               className="flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium transition-colors"
@@ -874,6 +874,8 @@ export function Dashboard() {
               <MessageSquare className="w-4 h-4" />
               SMS Opt-In
             </button>
+            <span className="text-gray-300">|</span>
+            <span className="text-xs text-gray-400">v1.0.0 - Jun 1, 2026</span>
           </div>
         </div>
       </footer>
