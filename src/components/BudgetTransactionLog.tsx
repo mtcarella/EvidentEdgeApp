@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Fuel, FileText, Receipt, ExternalLink, Users } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -11,11 +11,35 @@ interface BudgetTransaction {
   description: string;
   budget_type: string;
   balance_after: number | null;
-  meeting_id: string | null;
   created_at: string;
+  meeting_id: string | null;
 }
 
-type SortField = 'created_at' | 'description' | 'amount' | 'category' | 'type';
+interface MeetingDetail {
+  id: string;
+  meeting_date: string;
+  notes: string | null;
+  has_expense: boolean;
+  expense_payment_method: string | null;
+  expense_amount: number | null;
+  is_meeting: boolean;
+  is_text: boolean;
+  is_call: boolean;
+  is_email: boolean;
+  contact: { name: string } | null;
+  salesperson: { name: string } | null;
+  receipts: { id: string; file_path: string; file_name: string }[];
+  expenses: {
+    id: string;
+    description: string;
+    amount: number;
+    category: string;
+    receipt_path: string | null;
+    receipt_original_name: string | null;
+  }[];
+}
+
+type SortField = 'created_at' | 'description' | 'amount' | 'budget_type' | 'type';
 type SortDir = 'asc' | 'desc';
 
 interface Props {
@@ -29,13 +53,18 @@ export function BudgetTransactionLog({ onBack }: Props) {
   const [sortField, setSortField] = useState<SortField>('created_at');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
-  const [selectedTransaction, setSelectedTransaction] = useState<BudgetTransaction | null>(null);
-
+  // Filters
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
-  const [selectedType, setSelectedType] = useState<'all' | 'credit' | 'debit'>('all');
   const [selectedBudgetType, setSelectedBudgetType] = useState<'all' | 'regular' | 'gas'>('all');
+  const [selectedType, setSelectedType] = useState<'all' | 'credit' | 'debit'>('all');
+
+  // Meeting detail popup
+  const [selectedMeeting, setSelectedMeeting] = useState<MeetingDetail | null>(null);
+  const [loadingMeeting, setLoadingMeeting] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFilename, setPreviewFilename] = useState('');
 
   useEffect(() => {
     if (salesPerson?.id) fetchTransactions();
@@ -47,7 +76,7 @@ export function BudgetTransactionLog({ onBack }: Props) {
 
     const { data, error } = await supabase
       .from('budget_transactions')
-      .select('id, amount, type, category, description, budget_type, balance_after, meeting_id, created_at')
+      .select('id, amount, type, category, description, budget_type, balance_after, created_at, meeting_id')
       .eq('sales_person_id', salesPerson.id)
       .order('created_at', { ascending: false });
 
@@ -55,6 +84,57 @@ export function BudgetTransactionLog({ onBack }: Props) {
       setTransactions(data as BudgetTransaction[]);
     }
     setLoading(false);
+  };
+
+  const handleTransactionClick = async (transaction: BudgetTransaction) => {
+    if (!transaction.meeting_id) return;
+    setLoadingMeeting(true);
+
+    const { data, error } = await supabase
+      .from('meetings')
+      .select(`
+        id, meeting_date, notes, has_expense, expense_payment_method, expense_amount,
+        is_meeting, is_text, is_call, is_email,
+        contact:contacts(name),
+        salesperson:sales_people!meetings_salesperson_id_fkey(name),
+        receipts:meeting_receipts(id, file_path, file_name),
+        expenses:meeting_expenses(id, description, amount, category, receipt_path, receipt_original_name)
+      `)
+      .eq('id', transaction.meeting_id)
+      .single();
+
+    if (!error && data) {
+      setSelectedMeeting({
+        ...data,
+        contact: data.contact as unknown as { name: string } | null,
+        salesperson: data.salesperson as unknown as { name: string } | null,
+        receipts: (data.receipts || []) as MeetingDetail['receipts'],
+        expenses: (data.expenses || []) as MeetingDetail['expenses'],
+      });
+    }
+    setLoadingMeeting(false);
+  };
+
+  const handleViewReceipt = async (filePath: string, fileName?: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('receipts')
+        .createSignedUrl(filePath, 300);
+      if (error || !data?.signedUrl) return;
+      setPreviewUrl(data.signedUrl);
+      setPreviewFilename(fileName || filePath.split('/').pop() || 'receipt');
+    } catch (err) {
+      console.error('Error loading receipt:', err);
+    }
+  };
+
+  const closeMeetingModal = () => {
+    setSelectedMeeting(null);
+  };
+
+  const closePreview = () => {
+    setPreviewUrl(null);
+    setPreviewFilename('');
   };
 
   const availableMonths = useMemo(() => {
@@ -69,12 +149,12 @@ export function BudgetTransactionLog({ onBack }: Props) {
   const filteredTransactions = useMemo(() => {
     let result = [...transactions];
 
-    if (selectedBudgetType !== 'all') {
-      result = result.filter(t => t.budget_type === selectedBudgetType);
-    }
-
     if (selectedType !== 'all') {
       result = result.filter(t => t.type === selectedType);
+    }
+
+    if (selectedBudgetType !== 'all') {
+      result = result.filter(t => t.budget_type === selectedBudgetType);
     }
 
     if (selectedMonth) {
@@ -109,8 +189,8 @@ export function BudgetTransactionLog({ onBack }: Props) {
         case 'amount':
           cmp = a.amount - b.amount;
           break;
-        case 'category':
-          cmp = a.category.localeCompare(b.category);
+        case 'budget_type':
+          cmp = a.budget_type.localeCompare(b.budget_type);
           break;
         case 'type':
           cmp = a.type.localeCompare(b.type);
@@ -120,19 +200,20 @@ export function BudgetTransactionLog({ onBack }: Props) {
     });
 
     return result;
-  }, [transactions, selectedBudgetType, selectedType, selectedMonth, startDate, endDate, sortField, sortDir]);
+  }, [transactions, selectedType, selectedBudgetType, selectedMonth, startDate, endDate, sortField, sortDir]);
 
-  const summary = useMemo(() => {
+  const regularSummary = useMemo(() => {
     const regular = filteredTransactions.filter(t => t.budget_type === 'regular');
+    const totalCredits = regular.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
+    const totalDebits = regular.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
+    return { totalCredits, totalDebits, net: totalCredits - totalDebits };
+  }, [filteredTransactions]);
+
+  const gasSummary = useMemo(() => {
     const gas = filteredTransactions.filter(t => t.budget_type === 'gas');
-
-    const calc = (txns: BudgetTransaction[]) => {
-      const totalCredits = txns.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
-      const totalDebits = txns.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
-      return { totalCredits, totalDebits, net: totalCredits - totalDebits };
-    };
-
-    return { regular: calc(regular), gas: calc(gas) };
+    const totalCredits = gas.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
+    const totalDebits = gas.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
+    return { totalCredits, totalDebits, net: totalCredits - totalDebits };
   }, [filteredTransactions]);
 
   const handleSort = (field: SortField) => {
@@ -148,11 +229,11 @@ export function BudgetTransactionLog({ onBack }: Props) {
     setStartDate('');
     setEndDate('');
     setSelectedMonth('');
-    setSelectedType('all');
     setSelectedBudgetType('all');
+    setSelectedType('all');
   };
 
-  const hasActiveFilters = startDate || endDate || selectedMonth || selectedType !== 'all' || selectedBudgetType !== 'all';
+  const hasActiveFilters = startDate || endDate || selectedMonth || selectedBudgetType !== 'all' || selectedType !== 'all';
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -163,6 +244,15 @@ export function BudgetTransactionLog({ onBack }: Props) {
   const formatMonthLabel = (monthStr: string) => {
     const [year, month] = monthStr.split('-').map(Number);
     return new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const getMeetingTypes = (meeting: MeetingDetail) => {
+    const types: string[] = [];
+    if (meeting.is_meeting) types.push('Meeting');
+    if (meeting.is_call) types.push('Call');
+    if (meeting.is_text) types.push('Text');
+    if (meeting.is_email) types.push('Email');
+    return types.join(', ') || 'Meeting';
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -195,9 +285,7 @@ export function BudgetTransactionLog({ onBack }: Props) {
           )}
           <div className="flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-900">
-              Budget Transaction Log
-            </h2>
+            <h2 className="text-lg font-semibold text-slate-900">Budget Transaction Log</h2>
           </div>
         </div>
         <span className="text-sm text-slate-500">
@@ -205,68 +293,68 @@ export function BudgetTransactionLog({ onBack }: Props) {
         </span>
       </div>
 
-      {/* Summary Bar */}
-      <div className="space-y-4 mb-6">
-        <div>
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-            Regular Budget
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
-              </div>
-              <p className="text-lg font-bold text-emerald-800">{formatCurrency(summary.regular.totalCredits)}</p>
+      {/* Summary Bars - Regular Budget */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <DollarSign className="w-4 h-4 text-emerald-600" />
+          <span className="text-sm font-semibold text-slate-700">Regular Budget</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-0.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
             </div>
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingDown className="w-3.5 h-3.5 text-red-600" />
-                <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
-              </div>
-              <p className="text-lg font-bold text-red-800">{formatCurrency(summary.regular.totalDebits)}</p>
+            <p className="text-lg font-bold text-emerald-800">{formatCurrency(regularSummary.totalCredits)}</p>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-0.5">
+              <TrendingDown className="w-3.5 h-3.5 text-red-600" />
+              <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
             </div>
-            <div className={`border rounded-xl p-3 ${summary.regular.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <Minus className={`w-3.5 h-3.5 ${summary.regular.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
-                <span className={`text-xs font-semibold uppercase tracking-wider ${summary.regular.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
-              </div>
-              <p className={`text-lg font-bold ${summary.regular.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
-                {summary.regular.net >= 0 ? '+' : ''}{formatCurrency(summary.regular.net)}
-              </p>
+            <p className="text-lg font-bold text-red-800">{formatCurrency(regularSummary.totalDebits)}</p>
+          </div>
+          <div className={`border rounded-xl p-3 ${regularSummary.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+            <div className="flex items-center gap-2 mb-0.5">
+              <Minus className={`w-3.5 h-3.5 ${regularSummary.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+              <span className={`text-xs font-semibold uppercase tracking-wider ${regularSummary.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
             </div>
+            <p className={`text-lg font-bold ${regularSummary.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
+              {regularSummary.net >= 0 ? '+' : ''}{formatCurrency(regularSummary.net)}
+            </p>
           </div>
         </div>
-        <div>
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Fuel className="w-3.5 h-3.5 text-amber-600" />
-            Gas Budget
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-                <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
-              </div>
-              <p className="text-lg font-bold text-emerald-800">{formatCurrency(summary.gas.totalCredits)}</p>
+      </div>
+
+      {/* Summary Bars - Gas Budget */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-2">
+          <Fuel className="w-4 h-4 text-amber-600" />
+          <span className="text-sm font-semibold text-slate-700">Gas Budget</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-0.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
             </div>
-            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingDown className="w-3.5 h-3.5 text-red-600" />
-                <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
-              </div>
-              <p className="text-lg font-bold text-red-800">{formatCurrency(summary.gas.totalDebits)}</p>
+            <p className="text-lg font-bold text-emerald-800">{formatCurrency(gasSummary.totalCredits)}</p>
+          </div>
+          <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-0.5">
+              <TrendingDown className="w-3.5 h-3.5 text-red-600" />
+              <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
             </div>
-            <div className={`border rounded-xl p-3 ${summary.gas.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <Minus className={`w-3.5 h-3.5 ${summary.gas.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
-                <span className={`text-xs font-semibold uppercase tracking-wider ${summary.gas.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
-              </div>
-              <p className={`text-lg font-bold ${summary.gas.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
-                {summary.gas.net >= 0 ? '+' : ''}{formatCurrency(summary.gas.net)}
-              </p>
+            <p className="text-lg font-bold text-red-800">{formatCurrency(gasSummary.totalDebits)}</p>
+          </div>
+          <div className={`border rounded-xl p-3 ${gasSummary.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+            <div className="flex items-center gap-2 mb-0.5">
+              <Minus className={`w-3.5 h-3.5 ${gasSummary.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+              <span className={`text-xs font-semibold uppercase tracking-wider ${gasSummary.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
             </div>
+            <p className={`text-lg font-bold ${gasSummary.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
+              {gasSummary.net >= 0 ? '+' : ''}{formatCurrency(gasSummary.net)}
+            </p>
           </div>
         </div>
       </div>
@@ -323,6 +411,18 @@ export function BudgetTransactionLog({ onBack }: Props) {
             </select>
           </div>
           <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Account</label>
+            <select
+              value={selectedBudgetType}
+              onChange={e => setSelectedBudgetType(e.target.value as 'all' | 'regular' | 'gas')}
+              className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 outline-none bg-white"
+            >
+              <option value="all">All Accounts</option>
+              <option value="regular">Budget</option>
+              <option value="gas">Gas</option>
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Type</label>
             <select
               value={selectedType}
@@ -334,25 +434,13 @@ export function BudgetTransactionLog({ onBack }: Props) {
               <option value="debit">Debit</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Budget</label>
-            <select
-              value={selectedBudgetType}
-              onChange={e => setSelectedBudgetType(e.target.value as 'all' | 'regular' | 'gas')}
-              className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 outline-none bg-white"
-            >
-              <option value="all">All Budgets</option>
-              <option value="regular">Regular</option>
-              <option value="gas">Gas</option>
-            </select>
-          </div>
         </div>
       </div>
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px]">
+          <table className="w-full min-w-[700px]">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/60">
                 <th className="text-left py-3 px-4">
@@ -371,8 +459,8 @@ export function BudgetTransactionLog({ onBack }: Props) {
                   </button>
                 </th>
                 <th className="text-left py-3 px-4">
-                  <button onClick={() => handleSort('category')} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 transition-colors">
-                    Account <SortIcon field="category" />
+                  <button onClick={() => handleSort('budget_type')} className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider hover:text-slate-700 transition-colors">
+                    Account <SortIcon field="budget_type" />
                   </button>
                 </th>
                 <th className="text-left py-3 px-4">
@@ -380,12 +468,15 @@ export function BudgetTransactionLog({ onBack }: Props) {
                     Type <SortIcon field="type" />
                   </button>
                 </th>
+                <th className="text-center py-3 px-3 w-12">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Details</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-12">
+                  <td colSpan={6} className="text-center py-12">
                     <DollarSign className="w-10 h-10 mx-auto mb-3 text-slate-300" />
                     <p className="text-slate-500 font-medium">No transactions found</p>
                     <p className="text-sm text-slate-400 mt-1">
@@ -397,29 +488,25 @@ export function BudgetTransactionLog({ onBack }: Props) {
                 filteredTransactions.map(t => (
                   <tr
                     key={t.id}
-                    onClick={() => setSelectedTransaction(t)}
-                    className={`border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors ${
-                      t.meeting_id ? 'cursor-pointer' : 'cursor-default'
-                    }`}
+                    className={`border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors ${t.meeting_id ? 'cursor-pointer' : ''}`}
+                    onClick={() => t.meeting_id && handleTransactionClick(t)}
                   >
                     <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
                       {formatDate(t.created_at)}
                     </td>
-                    <td className="py-3 px-4 text-sm text-slate-800 max-w-[240px]">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate">{t.description || '\u2014'}</span>
-                        {t.meeting_id && <ExternalLink className="w-3 h-3 text-blue-400 flex-shrink-0" />}
-                      </span>
+                    <td className="py-3 px-4 text-sm text-slate-800 max-w-[240px] truncate">
+                      {t.description || '\u2014'}
                     </td>
                     <td className={`py-3 px-4 text-sm font-semibold whitespace-nowrap ${t.type === 'credit' ? 'text-emerald-700' : 'text-red-700'}`}>
                       {t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}
                     </td>
                     <td className="py-3 px-4">
-                      <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full ${
                         t.budget_type === 'gas'
                           ? 'bg-amber-100 text-amber-700'
                           : 'bg-emerald-100 text-emerald-700'
                       }`}>
+                        {t.budget_type === 'gas' ? <Fuel className="w-3 h-3" /> : <DollarSign className="w-3 h-3" />}
                         {t.budget_type === 'gas' ? 'Gas' : 'Budget'}
                       </span>
                     </td>
@@ -433,6 +520,19 @@ export function BudgetTransactionLog({ onBack }: Props) {
                         {t.type === 'credit' ? 'Credit' : 'Debit'}
                       </span>
                     </td>
+                    <td className="py-3 px-3 text-center">
+                      {t.meeting_id ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleTransactionClick(t); }}
+                          className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                          title="View linked meeting"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <span className="text-slate-300">&mdash;</span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}
@@ -441,282 +541,175 @@ export function BudgetTransactionLog({ onBack }: Props) {
         </div>
       </div>
 
-      {selectedTransaction && (
-        <TransactionDetailModal
-          transaction={selectedTransaction}
-          onClose={() => setSelectedTransaction(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-interface MeetingDetail {
-  id: string;
-  meeting_date: string;
-  notes: string | null;
-  is_meeting: boolean;
-  is_call: boolean;
-  is_text: boolean;
-  is_email: boolean;
-  expense_amount: number | null;
-  expense_payment_method: string | null;
-  contact: { name: string } | null;
-}
-
-interface MeetingExpense {
-  id: string;
-  amount: number;
-  description: string | null;
-  receipt_path: string | null;
-  receipt_name: string | null;
-  notes: string | null;
-  category: string | null;
-}
-
-interface MeetingReceipt {
-  id: string;
-  file_path: string;
-  file_name: string | null;
-  amount: number | null;
-}
-
-function TransactionDetailModal({ transaction, onClose }: { transaction: BudgetTransaction; onClose: () => void }) {
-  const [meeting, setMeeting] = useState<MeetingDetail | null>(null);
-  const [expenses, setExpenses] = useState<MeetingExpense[]>([]);
-  const [receipts, setReceipts] = useState<MeetingReceipt[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [receiptUrls, setReceiptUrls] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    if (transaction.meeting_id) {
-      fetchMeetingDetails();
-    } else {
-      setLoading(false);
-    }
-  }, [transaction.meeting_id]);
-
-  const fetchMeetingDetails = async () => {
-    if (!transaction.meeting_id) return;
-    setLoading(true);
-
-    const [meetingRes, expensesRes, receiptsRes] = await Promise.all([
-      supabase
-        .from('meetings')
-        .select('id, meeting_date, notes, is_meeting, is_call, is_text, is_email, expense_amount, expense_payment_method, contact:contacts(name)')
-        .eq('id', transaction.meeting_id)
-        .maybeSingle(),
-      supabase
-        .from('meeting_expenses')
-        .select('id, amount, description, receipt_path, receipt_name, notes, category')
-        .eq('meeting_id', transaction.meeting_id)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('meeting_receipts')
-        .select('id, file_path, file_name, amount')
-        .eq('meeting_id', transaction.meeting_id)
-        .order('created_at', { ascending: true }),
-    ]);
-
-    if (meetingRes.data) setMeeting(meetingRes.data as any);
-    if (expensesRes.data) setExpenses(expensesRes.data as MeetingExpense[]);
-    if (receiptsRes.data) setReceipts(receiptsRes.data as MeetingReceipt[]);
-    setLoading(false);
-  };
-
-  const openReceipt = async (path: string) => {
-    if (receiptUrls[path]) {
-      window.open(receiptUrls[path], '_blank');
-      return;
-    }
-    const { data } = await supabase.storage.from('receipts').createSignedUrl(path, 300);
-    if (data?.signedUrl) {
-      setReceiptUrls(prev => ({ ...prev, [path]: data.signedUrl }));
-      window.open(data.signedUrl, '_blank');
-    }
-  };
-
-  const getMeetingTypeLabel = () => {
-    if (!meeting) return '';
-    const types = [];
-    if (meeting.is_meeting) types.push('Meeting');
-    if (meeting.is_call) types.push('Call');
-    if (meeting.is_text) types.push('Text');
-    if (meeting.is_email) types.push('Email');
-    return types.join(', ') || 'Meeting';
-  };
-
-  const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50">
-          <h3 className="text-base font-semibold text-slate-900">Transaction Details</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-200 transition-colors">
-            <X className="w-4 h-4 text-slate-500" />
-          </button>
-        </div>
-
-        <div className="overflow-y-auto max-h-[calc(85vh-64px)] p-6 space-y-5">
-          {/* Transaction summary */}
-          <div className="bg-slate-50 rounded-xl p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 uppercase">Amount</span>
-              <span className={`text-lg font-bold ${transaction.type === 'credit' ? 'text-emerald-700' : 'text-red-700'}`}>
-                {transaction.type === 'credit' ? '+' : '-'}{formatCurrency(transaction.amount)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 uppercase">Date</span>
-              <span className="text-sm text-slate-700">
-                {new Date(transaction.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500 uppercase">Account</span>
-              <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${
-                transaction.budget_type === 'gas' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-              }`}>
-                {transaction.budget_type === 'gas' ? 'Gas' : 'Budget'}
-              </span>
-            </div>
-            {transaction.balance_after !== null && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500 uppercase">Balance After</span>
-                <span className="text-sm text-slate-700">{formatCurrency(transaction.balance_after)}</span>
+      {/* Meeting Detail Modal */}
+      {(selectedMeeting || loadingMeeting) && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closeMeetingModal}>
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            {loadingMeeting && !selectedMeeting ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
               </div>
+            ) : selectedMeeting && (
+              <>
+                <div className="flex items-center justify-between p-5 border-b border-slate-100">
+                  <h3 className="text-lg font-semibold text-slate-900">Meeting Details</h3>
+                  <button
+                    onClick={closeMeetingModal}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Date</span>
+                      <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                        {formatDate(selectedMeeting.meeting_date)}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Type</span>
+                      <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                        {getMeetingTypes(selectedMeeting)}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Contact</span>
+                      <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                        {selectedMeeting.contact?.name || 'N/A'}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Salesperson</span>
+                      <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                        {selectedMeeting.salesperson?.name || 'N/A'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {selectedMeeting.notes && (
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Notes</span>
+                      <p className="text-sm text-slate-700 mt-1 bg-slate-50 p-3 rounded-lg whitespace-pre-wrap">
+                        {selectedMeeting.notes}
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedMeeting.has_expense && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <span className="text-xs font-semibold text-amber-700 uppercase tracking-wider">Expense</span>
+                      <div className="flex items-center gap-4 mt-1.5">
+                        {selectedMeeting.expense_amount != null && (
+                          <span className="text-sm font-bold text-amber-900">
+                            {formatCurrency(selectedMeeting.expense_amount)}
+                          </span>
+                        )}
+                        {selectedMeeting.expense_payment_method && (
+                          <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full capitalize">
+                            {selectedMeeting.expense_payment_method === 'personal' ? 'Personal Card' : 'Company Card'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedMeeting.expenses.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Expense Items</span>
+                      <div className="mt-2 space-y-2">
+                        {selectedMeeting.expenses.map(exp => (
+                          <div key={exp.id} className="flex items-center justify-between p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{exp.description || 'Expense'}</p>
+                              <p className="text-xs text-slate-500 capitalize">{exp.category}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-slate-700">{formatCurrency(exp.amount)}</span>
+                              {exp.receipt_path && (
+                                <button
+                                  onClick={() => handleViewReceipt(exp.receipt_path!, exp.receipt_original_name || undefined)}
+                                  className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                                  title="View receipt"
+                                >
+                                  <Image className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedMeeting.receipts.length > 0 && (
+                    <div>
+                      <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Receipts</span>
+                      <div className="mt-2 space-y-2">
+                        {selectedMeeting.receipts.map(receipt => (
+                          <button
+                            key={receipt.id}
+                            onClick={() => handleViewReceipt(receipt.file_path, receipt.file_name)}
+                            className="w-full flex items-center gap-3 p-2.5 bg-slate-50 hover:bg-emerald-50 rounded-lg border border-slate-100 hover:border-emerald-200 transition-colors text-left"
+                          >
+                            <FileText className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                            <span className="text-sm text-slate-700 truncate flex-1">
+                              {receipt.file_name || receipt.file_path.split('/').pop() || 'Receipt'}
+                            </span>
+                            <Eye className="w-4 h-4 text-slate-400" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedMeeting.receipts.length === 0 && selectedMeeting.expenses.every(e => !e.receipt_path) && (
+                    <p className="text-sm text-slate-400 italic text-center py-2">No receipts attached to this meeting</p>
+                  )}
+                </div>
+              </>
             )}
           </div>
-
-          {loading && (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-            </div>
-          )}
-
-          {!loading && !transaction.meeting_id && (
-            <div className="text-center py-6">
-              <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
-              <p className="text-sm text-slate-500">No linked meeting for this transaction</p>
-            </div>
-          )}
-
-          {!loading && meeting && (
-            <>
-              {/* Meeting info */}
-              <div>
-                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5" />
-                  Linked Meeting
-                </h4>
-                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">Contact</span>
-                    <span className="text-sm font-medium text-slate-800">{(meeting.contact as any)?.name || 'Unknown'}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">Date</span>
-                    <span className="text-sm text-slate-700">
-                      {new Date(meeting.meeting_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-slate-500">Type</span>
-                    <span className="text-sm text-slate-700">{getMeetingTypeLabel()}</span>
-                  </div>
-                  {meeting.expense_payment_method && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">Payment</span>
-                      <span className="text-sm text-slate-700 capitalize">{meeting.expense_payment_method}</span>
-                    </div>
-                  )}
-                  {meeting.expense_amount != null && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">Total Expense</span>
-                      <span className="text-sm font-medium text-slate-800">{formatCurrency(meeting.expense_amount)}</span>
-                    </div>
-                  )}
-                  {meeting.notes && (
-                    <div className="pt-2 border-t border-slate-100">
-                      <span className="text-xs text-slate-500 block mb-1">Notes</span>
-                      <p className="text-sm text-slate-700 whitespace-pre-wrap">{meeting.notes}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Expense line items */}
-              {expenses.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <DollarSign className="w-3.5 h-3.5" />
-                    Expense Items ({expenses.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {expenses.map(exp => (
-                      <div key={exp.id} className="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{exp.description || 'Expense'}</p>
-                          {exp.category && <p className="text-xs text-slate-400">{exp.category}</p>}
-                          {exp.notes && <p className="text-xs text-slate-500 mt-0.5 truncate">{exp.notes}</p>}
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className="text-sm font-semibold text-slate-800">{formatCurrency(exp.amount)}</span>
-                          {exp.receipt_path && (
-                            <button
-                              onClick={() => openReceipt(exp.receipt_path!)}
-                              className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors"
-                              title="View receipt"
-                            >
-                              <Receipt className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Legacy receipts (meeting_receipts table) */}
-              {receipts.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <Receipt className="w-3.5 h-3.5" />
-                    Receipts ({receipts.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {receipts.map(r => (
-                      <div key={r.id} className="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-slate-700 truncate">{r.file_name || 'Receipt'}</p>
-                          {r.amount != null && <p className="text-xs text-slate-500">{formatCurrency(r.amount)}</p>}
-                        </div>
-                        <button
-                          onClick={() => openReceipt(r.file_path)}
-                          className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors"
-                          title="View receipt"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {expenses.length === 0 && receipts.length === 0 && (
-                <div className="text-center py-4">
-                  <Receipt className="w-6 h-6 mx-auto mb-1.5 text-slate-300" />
-                  <p className="text-xs text-slate-400">No expense items or receipts recorded</p>
-                </div>
-              )}
-            </>
-          )}
         </div>
-      </div>
+      )}
+
+      {/* Receipt Preview Modal */}
+      {previewUrl && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={closePreview}>
+          <div className="relative max-w-3xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between bg-white rounded-t-xl px-4 py-3 border-b border-slate-200">
+              <span className="text-sm font-medium text-slate-700 truncate">{previewFilename}</span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewUrl}
+                  download={previewFilename}
+                  className="px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors"
+                >
+                  Download
+                </a>
+                <button
+                  onClick={closePreview}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-white rounded-b-xl overflow-auto flex items-center justify-center p-4">
+              {previewUrl.match(/\.pdf/i) ? (
+                <iframe src={previewUrl} className="w-full h-[70vh] border-0 rounded" />
+              ) : (
+                <img src={previewUrl} alt={previewFilename} className="max-w-full max-h-[70vh] object-contain rounded" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

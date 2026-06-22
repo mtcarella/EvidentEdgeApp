@@ -324,8 +324,10 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
       if (error) throw error;
 
       let primaryMeetingId: string | undefined;
-      if (insertedMeetings && insertedMeetings.length > 0 && quickMeetingHasExpense) {
+      if (insertedMeetings && insertedMeetings.length > 0) {
         primaryMeetingId = insertedMeetings[0].id;
+      }
+      if (primaryMeetingId && quickMeetingHasExpense) {
         const expensesToInsert: Record<string, unknown>[] = [];
 
         for (const exp of quickMeetingExpenses) {
@@ -383,7 +385,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
       if (quickMeetingHasExpense && expenseTotal > 0) {
         const primaryContact = contacts.find(c => c.id === quickMeetingContactId);
         const budgetType = getBudgetTypeForContact(primaryContact?.name);
-        const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, primaryMeetingId);
+        const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, '', primaryMeetingId);
         if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);

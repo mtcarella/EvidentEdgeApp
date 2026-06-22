@@ -236,8 +236,13 @@ export function ViewCommunications() {
     let query = supabase
       .from('communication_logs')
       .select('*')
-      .is('reply_to_message_id', null)
-      .or(`recipient_ids.cs.["${user.id}"],sent_by.eq.${user.id}`);
+      .is('reply_to_message_id', null);
+
+    const isAdminUser = salesPerson?.role === 'admin' || salesPerson?.role === 'super_admin';
+
+    if (!isAdminUser) {
+      query = query.or(`recipient_ids.cs.["${user.id}"],sent_by.eq.${user.id}`);
+    }
 
     const { data: logs, error } = await query.order('sent_at', { ascending: false });
 

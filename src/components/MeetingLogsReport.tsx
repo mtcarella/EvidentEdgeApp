@@ -379,7 +379,7 @@ export function MeetingLogsReport() {
       const newExpenseAmount = (editFormData.has_expense && editFormData.expense_amount) ? parseFloat(editFormData.expense_amount) : 0;
       if (oldExpenseAmount !== newExpenseAmount) {
         const budgetType = getBudgetTypeForContact(editingMeeting.contact?.name);
-        const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount, budgetType);
+        const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount, budgetType, editingMeeting.id);
         if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: ${getBudgetLabel(budgetType)} exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
@@ -414,7 +414,7 @@ export function MeetingLogsReport() {
       }
 
       if (expenseToRestore > 0) {
-        await restoreBudget(meeting.salesperson_id, expenseToRestore, getBudgetTypeForContact(meeting.contact?.name));
+        await restoreBudget(meeting.salesperson_id, expenseToRestore, getBudgetTypeForContact(meeting.contact?.name), '', meeting.id);
       }
 
       loadMeetings();
@@ -586,7 +586,6 @@ export function MeetingLogsReport() {
             'Contact Name': meeting.contact?.name || '',
             Description: exp.description || '',
             Category: exp.category || '',
-            'Payment Method': meeting.expense_payment_method === 'personal' ? 'Personal' : meeting.expense_payment_method === 'company' ? 'Company' : '',
             Amount: exp.amount != null ? Number(exp.amount).toFixed(2) : '',
             'Original Filename': exp.receipt_original_name || '',
             'Renamed Filename': status === 'included' ? finalName : '',
@@ -638,7 +637,6 @@ export function MeetingLogsReport() {
               'Contact Name': meeting.contact?.name || '',
               Description: '',
               Category: '',
-              'Payment Method': meeting.expense_payment_method === 'personal' ? 'Personal' : meeting.expense_payment_method === 'company' ? 'Company' : '',
               Amount: '',
               'Original Filename': r.path.split('/').pop() || '',
               'Renamed Filename': status === 'included' ? finalName : '',
@@ -650,69 +648,7 @@ export function MeetingLogsReport() {
         }
       }
 
-      // Sort by username then date
-      summaryRows.sort((a, b) => {
-        const nameA = (a.Username as string).toLowerCase();
-        const nameB = (b.Username as string).toLowerCase();
-        if (nameA !== nameB) return nameA.localeCompare(nameB);
-        return (a.Date as string).localeCompare(b.Date as string);
-      });
-
-      // Build grouped rows with subtotals per username
-      const groupedRows: Record<string, string | number>[] = [];
-      let currentUser = '';
-      let userTotal = 0;
-
-      for (const row of summaryRows) {
-        const username = row.Username as string;
-        if (username !== currentUser) {
-          if (currentUser && userTotal > 0) {
-            groupedRows.push({
-              Date: '',
-              Username: `TOTAL - ${currentUser}`,
-              'Contact Name': '',
-              Description: '',
-              Category: '',
-              'Payment Method': '',
-              Amount: userTotal.toFixed(2),
-              'Original Filename': '',
-              'Renamed Filename': '',
-              'Uploaded At': '',
-              Notes: '',
-              Status: '',
-            });
-            groupedRows.push({
-              Date: '', Username: '', 'Contact Name': '', Description: '',
-              Category: '', 'Payment Method': '', Amount: '',
-              'Original Filename': '', 'Renamed Filename': '',
-              'Uploaded At': '', Notes: '', Status: '',
-            });
-          }
-          currentUser = username;
-          userTotal = 0;
-        }
-        const amt = row.Amount ? parseFloat(row.Amount as string) : 0;
-        userTotal += amt;
-        groupedRows.push(row);
-      }
-      if (currentUser && userTotal > 0) {
-        groupedRows.push({
-          Date: '',
-          Username: `TOTAL - ${currentUser}`,
-          'Contact Name': '',
-          Description: '',
-          Category: '',
-          'Payment Method': '',
-          Amount: userTotal.toFixed(2),
-          'Original Filename': '',
-          'Renamed Filename': '',
-          'Uploaded At': '',
-          Notes: '',
-          Status: '',
-        });
-      }
-
-      const worksheet = XLSX.utils.json_to_sheet(groupedRows);
+      const worksheet = XLSX.utils.json_to_sheet(summaryRows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Receipts');
       const summaryBuffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });

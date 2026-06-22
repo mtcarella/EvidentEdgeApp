@@ -395,7 +395,7 @@ export function Dashboard() {
     { id: 'admin' as Tab, label: 'Admin Panel', icon: Database, module: 'admin_panel', color: 'text-rose-600' },
     { id: 'audit' as Tab, label: 'Audit Log', icon: History, module: 'audit_log', color: 'text-slate-500' },
     { id: 'announcements-admin' as Tab, label: 'Manage Announcements', icon: Megaphone, module: 'manage_announcements', color: 'text-teal-600' },
-    { id: 'employee-communication' as Tab, label: 'Manage Office Communications', icon: Mail, module: 'employee_communication', color: 'text-purple-600', superAdminOnly: true },
+    { id: 'employee-communication' as Tab, label: 'Manage Office Communications', icon: Mail, module: 'employee_communication', color: 'text-purple-600' },
     { id: 'sms-management' as Tab, label: 'SMS Opt-In Management', icon: MessageSquare, module: 'sms_management', color: 'text-blue-600' },
     { id: 'rewards' as Tab, label: 'Rewards Report', icon: Award, module: 'closer_rewards_report', color: 'text-yellow-600' },
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
@@ -418,10 +418,7 @@ export function Dashboard() {
     }
     return hasAccess(tab.module);
   });
-  const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => {
-    if ((tab as any).superAdminOnly && salesPerson?.role !== 'super_admin') return false;
-    return hasAccess(tab.module);
-  });
+  const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => hasAccess(tab.module));
 
   const [activeTab, setActiveTab] = useState<Tab>('search');
 
@@ -869,7 +866,7 @@ export function Dashboard() {
         {activeTab === 'announcements' && hasAccess('announcements') && <AnnouncementsArchive />}
         {activeTab === 'announcements-admin' && hasAccess('manage_announcements') && <AnnouncementsAdmin />}
         {activeTab === 'view-communications' && hasAccess('view_communications') && <ViewCommunications />}
-        {activeTab === 'employee-communication' && salesPerson?.role === 'super_admin' && hasAccess('employee_communication') && <EmployeeCommunication />}
+        {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
         {activeTab === 'upload-resource' && hasAccess('upload_resource') && <UploadResource />}
         {activeTab === 'direct-messages' && chatEnabled && hasAccess('direct_messages') && <DirectMessages />}

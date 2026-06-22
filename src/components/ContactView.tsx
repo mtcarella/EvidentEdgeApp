@@ -298,7 +298,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       if (hasExpense && expenseTotal > 0) {
         const budgetType = getBudgetTypeForContact(contact?.name);
-        const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, primaryMeetingId);
+        const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, '', primaryMeetingId);
         if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
@@ -435,7 +435,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       if (oldExpenseAmount !== newExpenseAmount) {
         const budgetType = getBudgetTypeForContact(contact?.name);
-        const result = await adjustBudget(salesPerson.id, oldExpenseAmount, newExpenseAmount, budgetType);
+        const result = await adjustBudget(salesPerson.id, oldExpenseAmount, newExpenseAmount, budgetType, meetingId);
         if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
@@ -468,7 +468,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
       if (error) throw error;
 
       if (expenseToRestore > 0) {
-        await restoreBudget(salesPerson.id, expenseToRestore, getBudgetTypeForContact(contact?.name));
+        await restoreBudget(salesPerson.id, expenseToRestore, getBudgetTypeForContact(contact?.name), '', meetingId);
       }
 
       loadContactData();

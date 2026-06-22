@@ -30,6 +30,7 @@ export async function deductBudget(
   salesPersonId: string,
   amount: number,
   budgetType: BudgetType = 'regular',
+  description: string = '',
   meetingId?: string
 ): Promise<BudgetDeductionResult> {
   const column = columnFor(budgetType);
@@ -55,7 +56,7 @@ export async function deductBudget(
       return { success: false, newBalance: null, exceeded: false, budgetType, error: error.message };
     }
 
-    logBudgetTransaction(salesPersonId, user.user_id, amount, 'debit', budgetType, 'Expense deduction', newBudget, meetingId);
+    logBudgetTransaction(salesPersonId, user.user_id, amount, 'debit', budgetType, description, newBudget, meetingId);
 
     if (newBudget < 0) {
       notifyBudgetExceeded(user.name, user.email, newBudget, budgetType);
@@ -71,6 +72,7 @@ export async function restoreBudget(
   salesPersonId: string,
   amount: number,
   budgetType: BudgetType = 'regular',
+  description: string = '',
   meetingId?: string
 ): Promise<BudgetDeductionResult> {
   const column = columnFor(budgetType);
@@ -96,7 +98,7 @@ export async function restoreBudget(
       return { success: false, newBalance: null, exceeded: false, budgetType, error: error.message };
     }
 
-    logBudgetTransaction(salesPersonId, user.user_id, amount, 'credit', budgetType, 'Budget restored', newBudget, meetingId);
+    logBudgetTransaction(salesPersonId, user.user_id, amount, 'credit', budgetType, description || 'Budget restored', newBudget, meetingId);
 
     return { success: true, newBalance: newBudget, exceeded: newBudget < 0, budgetType };
   } catch (err: any) {
@@ -115,9 +117,9 @@ export async function adjustBudget(
   if (diff === 0) return { success: true, newBalance: null, exceeded: false, budgetType };
 
   if (diff > 0) {
-    return deductBudget(salesPersonId, diff, budgetType, meetingId);
+    return deductBudget(salesPersonId, diff, budgetType, '', meetingId);
   } else {
-    return restoreBudget(salesPersonId, Math.abs(diff), budgetType, meetingId);
+    return restoreBudget(salesPersonId, Math.abs(diff), budgetType, '', meetingId);
   }
 }
 
@@ -143,7 +145,7 @@ export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 }
 
-export async function logBudgetTransaction(
+async function logBudgetTransaction(
   salesPersonId: string,
   userId: string,
   amount: number,
@@ -160,8 +162,8 @@ export async function logBudgetTransaction(
       amount,
       type,
       budget_type: budgetType,
-      category: budgetType === 'gas' ? 'Gas' : 'Budget',
-      description,
+      category: 'general',
+      description: description || (type === 'debit' ? 'Budget deduction' : 'Funds added'),
       balance_after: balanceAfter,
       ...(meetingId ? { meeting_id: meetingId } : {}),
     });

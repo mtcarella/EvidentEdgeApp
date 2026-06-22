@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X, Fuel } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { logBudgetTransaction } from '../lib/budgetUtils';
 import { useAuth } from '../contexts/AuthContext';
+import { BudgetType } from '../lib/budgetUtils';
 
 type BudgetField = 'budget' | 'gas_budget';
 
@@ -86,6 +86,31 @@ export function BudgetManagement() {
     });
   }, [salesPerson]);
 
+  const logTransaction = useCallback(async (
+    targetUser: BudgetUser,
+    field: BudgetField,
+    amount: number,
+    type: 'credit' | 'debit',
+    balanceAfter: number,
+    description: string
+  ) => {
+    const budgetType: BudgetType = field === 'gas_budget' ? 'gas' : 'regular';
+    try {
+      await supabase.from('budget_transactions').insert({
+        sales_person_id: targetUser.id,
+        user_id: targetUser.user_id,
+        amount,
+        type,
+        budget_type: budgetType,
+        category: 'admin',
+        description,
+        balance_after: balanceAfter,
+      });
+    } catch (err) {
+      console.error('Failed to log budget transaction:', err);
+    }
+  }, []);
+
   const saveBudget = useCallback(async (userId: string, field: BudgetField, value: number) => {
     const key = rk(userId, field);
     setStatus(key, 'saving');
@@ -121,20 +146,6 @@ export function BudgetManagement() {
     debounceTimers.current[key] = setTimeout(() => saveBudget(userId, field, numValue), 700);
   }, [saveBudget]);
 
-  const handleBudgetBlur = useCallback((userId: string, field: BudgetField) => {
-    const key = rk(userId, field);
-    if (debounceTimers.current[key]) {
-      clearTimeout(debounceTimers.current[key]);
-      delete debounceTimers.current[key];
-    }
-    const user = users.find(u => u.id === userId);
-    if (user) {
-      const value = parseFloat(String(user[field])) || 0;
-      saveBudget(userId, field, value);
-    }
-    setFocusedKey(null);
-  }, [users, saveBudget]);
-
   const validateAddFunds = (value: string): string | null => {
     if (!value.trim()) return 'Enter an amount';
     const num = parseFloat(value);
@@ -164,12 +175,13 @@ export function BudgetManagement() {
     const success = await saveBudget(userId, field, newValue);
 
     if (success) {
-      const budgetType = field === 'gas_budget' ? 'gas' : 'regular';
-      logBudgetTransaction(userId, user.user_id, amount, 'credit', budgetType, 'Funds added by admin', newValue);
-
       setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
       setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
       setAddFundsOpen(prev => ({ ...prev, [key]: false }));
+
+      const adminName = salesPerson?.name || 'Admin';
+      const fieldLabel = field === 'gas_budget' ? 'gas budget' : 'budget';
+      logTransaction(user, field, amount, 'credit', newValue, `${adminName} added funds to ${fieldLabel}`);
 
       if (undoEntries[key]) clearTimeout(undoEntries[key].timer);
 
@@ -188,22 +200,28 @@ export function BudgetManagement() {
     } else {
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: previousValue } : u));
     }
-  }, [addFundsInputs, users, saveBudget, undoEntries]);
+  }, [addFundsInputs, users, saveBudget, undoEntries, logTransaction, salesPerson]);
 
   const handleUndo = useCallback(async (key: RowKey) => {
     const entry = undoEntries[key];
     if (!entry) return;
     clearTimeout(entry.timer);
 
+    const targetUser = users.find(u => u.id === entry.userId);
     setUsers(prev => prev.map(u => u.id === entry.userId ? { ...u, [entry.field]: entry.previousValue } : u));
     await saveBudget(entry.userId, entry.field, entry.previousValue);
+
+    if (targetUser) {
+      const fieldLabel = entry.field === 'gas_budget' ? 'gas budget' : 'budget';
+      logTransaction(targetUser, entry.field, entry.addedAmount, 'debit', entry.previousValue, `Undo: funds removed from ${fieldLabel}`);
+    }
 
     setUndoEntries(prev => {
       const next = { ...prev };
       delete next[key];
       return next;
     });
-  }, [undoEntries, saveBudget]);
+  }, [undoEntries, saveBudget, users, logTransaction]);
 
   const handleAddFundsInputChange = (key: RowKey, value: string) => {
     setAddFundsInputs(prev => ({ ...prev, [key]: value }));
@@ -281,7 +299,7 @@ export function BudgetManagement() {
               step="0.01"
               value={user[field]}
               onChange={(e) => handleBudgetChange(user.id, field, e.target.value)}
-              onBlur={() => handleBudgetBlur(user.id, field)}
+              onBlur={() => setFocusedKey(null)}
               autoFocus
               className="w-full pl-7 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all outline-none"
             />
