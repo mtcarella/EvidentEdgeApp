@@ -184,13 +184,10 @@ export function WireManagement() {
     setSearchPerformed(false);
 
     try {
-      const { data: matches, error } = await supabase
-        .from('verified_wires')
-        .select('*')
-        .eq('routing_number', routingNumber.trim())
-        .eq('account_number', accountNumber.trim())
-        .order('date_approved', { ascending: false })
-        .limit(1);
+      const { data: matches, error } = await supabase.rpc('search_verified_wire', {
+        p_routing: routingNumber.trim(),
+        p_account: accountNumber.trim(),
+      });
 
       const match = matches && matches.length > 0 ? matches[0] : null;
 
@@ -389,15 +386,14 @@ TRANSFER INFORMATION
 
     setLoading(true);
     try {
-      const { error } = await supabase.from('verified_wires').insert({
-        account_name: newWire.account_name.trim(),
-        bank_name: newWire.bank_name.trim(),
-        routing_number: newWire.routing_number.trim(),
-        phone: newWire.phone.trim() || null,
-        account_number: newWire.account_number.trim(),
-        approved_by: newWire.approved_by.trim(),
-        date_approved: newWire.date_approved,
-        created_by: user?.id,
+      const { error } = await supabase.rpc('insert_verified_wire', {
+        p_bank_name: newWire.bank_name.trim(),
+        p_account_name: newWire.account_name.trim(),
+        p_routing: newWire.routing_number.trim(),
+        p_account: newWire.account_number.trim(),
+        p_approved_by: newWire.approved_by.trim(),
+        p_date_approved: newWire.date_approved,
+        p_phone: newWire.phone.trim() || null,
       });
 
       if (error) {
@@ -444,10 +440,7 @@ TRANSFER INFORMATION
   const loadAllWires = async () => {
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('verified_wires')
-        .select('*')
-        .order('bank_name', { ascending: true });
+      const { data } = await supabase.rpc('list_verified_wires');
 
       if (data) {
         setAllWires(data);
@@ -478,18 +471,16 @@ TRANSFER INFORMATION
 
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from('verified_wires')
-        .update({
-          account_name: (editFormData.account_name || '').trim(),
-          bank_name: editFormData.bank_name.trim(),
-          routing_number: editFormData.routing_number.trim(),
-          account_number: editFormData.account_number.trim(),
-          phone: editFormData.phone?.trim() || null,
-          approved_by: editFormData.approved_by.trim(),
-          date_approved: editFormData.date_approved,
-        })
-        .eq('id', editingWire.id);
+      const { error } = await supabase.rpc('update_verified_wire', {
+        p_id: editingWire.id,
+        p_bank_name: editFormData.bank_name.trim(),
+        p_account_name: (editFormData.account_name || '').trim(),
+        p_routing: editFormData.routing_number.trim(),
+        p_account: editFormData.account_number.trim(),
+        p_approved_by: editFormData.approved_by.trim(),
+        p_date_approved: editFormData.date_approved,
+        p_phone: editFormData.phone?.trim() || null,
+      });
 
       if (error) {
         await dialog.alert('Failed to update verified wire');
@@ -512,10 +503,7 @@ TRANSFER INFORMATION
 
     setLoading(true);
     try {
-      const { error } = await supabase
-        .from('verified_wires')
-        .delete()
-        .eq('id', wireId);
+      const { error } = await supabase.rpc('delete_verified_wire', { p_id: wireId });
 
       if (error) {
         await dialog.alert('Failed to delete verified wire');

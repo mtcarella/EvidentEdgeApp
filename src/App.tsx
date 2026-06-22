@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import { LoginForm } from './components/LoginForm';
 import { Dashboard } from './components/Dashboard';
@@ -8,6 +8,13 @@ import { ForcePasswordReset } from './components/ForcePasswordReset';
 
 function App() {
   const { user, loading, forcePasswordReset, chatEnabled } = useAuth();
+  const location = useLocation();
+
+  const isResetPasswordPage = location.pathname === '/reset-password';
+
+  if (isResetPasswordPage) {
+    return <ResetPassword />;
+  }
 
   if (loading) {
     return (
@@ -27,7 +34,6 @@ function App() {
   return (
     <>
       <Routes>
-        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/" element={user ? <Dashboard /> : <LoginForm />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

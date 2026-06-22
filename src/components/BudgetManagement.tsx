@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X } from 'lucide-react';
+import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X, Fuel } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { logBudgetTransaction } from '../lib/budgetUtils';
 import { useAuth } from '../contexts/AuthContext';
+
+type BudgetField = 'budget' | 'gas_budget';
 
 interface BudgetUser {
   id: string;
+  user_id: string;
   name: string;
   budget: number;
+  gas_budget: number;
   updated_at: string | null;
 }
 
@@ -14,23 +19,27 @@ type RowStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface UndoEntry {
   userId: string;
-  previousBudget: number;
+  field: BudgetField;
+  previousValue: number;
   addedAmount: number;
   timer: ReturnType<typeof setTimeout>;
 }
 
+type RowKey = `${string}:${BudgetField}`;
+const rk = (userId: string, field: BudgetField): RowKey => `${userId}:${field}`;
+
 export function BudgetManagement() {
-  const { refreshSalesPerson } = useAuth();
+  const { refreshSalesPerson, salesPerson } = useAuth();
   const [users, setUsers] = useState<BudgetUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rowStatuses, setRowStatuses] = useState<Record<string, RowStatus>>({});
-  const [addFundsInputs, setAddFundsInputs] = useState<Record<string, string>>({});
-  const [addFundsErrors, setAddFundsErrors] = useState<Record<string, string>>({});
-  const [addFundsOpen, setAddFundsOpen] = useState<Record<string, boolean>>({});
-  const [undoEntries, setUndoEntries] = useState<Record<string, UndoEntry>>({});
-  const [focusedBudgetId, setFocusedBudgetId] = useState<string | null>(null);
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const savedTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [rowStatuses, setRowStatuses] = useState<Record<RowKey, RowStatus>>({});
+  const [addFundsInputs, setAddFundsInputs] = useState<Record<RowKey, string>>({});
+  const [addFundsErrors, setAddFundsErrors] = useState<Record<RowKey, string>>({});
+  const [addFundsOpen, setAddFundsOpen] = useState<Record<RowKey, boolean>>({});
+  const [undoEntries, setUndoEntries] = useState<Record<RowKey, UndoEntry>>({});
+  const [focusedKey, setFocusedKey] = useState<RowKey | null>(null);
+  const debounceTimers = useRef<Record<RowKey, ReturnType<typeof setTimeout>>>({});
+  const savedTimers = useRef<Record<RowKey, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
     loadUsers();
@@ -45,63 +54,86 @@ export function BudgetManagement() {
     setLoading(true);
     const { data, error } = await supabase
       .from('sales_people')
-      .select('id, name, budget, updated_at')
+      .select('id, user_id, name, budget, gas_budget, updated_at')
       .eq('budget_display_enabled', true)
       .order('name');
 
     if (!error && data) {
-      setUsers(data);
+      setUsers(data as BudgetUser[]);
     }
     setLoading(false);
   };
 
-  const setStatus = useCallback((userId: string, status: RowStatus) => {
-    setRowStatuses(prev => ({ ...prev, [userId]: status }));
-
+  const setStatus = useCallback((key: RowKey, status: RowStatus) => {
+    setRowStatuses(prev => ({ ...prev, [key]: status }));
     if (status === 'saved') {
-      if (savedTimers.current[userId]) clearTimeout(savedTimers.current[userId]);
-      savedTimers.current[userId] = setTimeout(() => {
-        setRowStatuses(prev => ({ ...prev, [userId]: 'idle' }));
+      if (savedTimers.current[key]) clearTimeout(savedTimers.current[key]);
+      savedTimers.current[key] = setTimeout(() => {
+        setRowStatuses(prev => ({ ...prev, [key]: 'idle' }));
       }, 2000);
     }
   }, []);
 
-  const saveBudget = useCallback(async (userId: string, budget: number) => {
-    setStatus(userId, 'saving');
+  const notifyBudgetOwner = useCallback(async (targetUser: BudgetUser, field: BudgetField, newValue: number) => {
+    if (!salesPerson || targetUser.id === salesPerson.id) return;
+    const fieldLabel = field === 'gas_budget' ? 'gas budget' : 'budget';
+    const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(newValue);
+    await supabase.from('notifications').insert({
+      user_id: targetUser.user_id,
+      message: `${salesPerson.name} updated your ${fieldLabel} to ${formatted}.`,
+      type: 'budget_edit',
+      metadata: { editor_id: salesPerson.id, editor_name: salesPerson.name, field, new_value: newValue },
+    });
+  }, [salesPerson]);
+
+  const saveBudget = useCallback(async (userId: string, field: BudgetField, value: number) => {
+    const key = rk(userId, field);
+    setStatus(key, 'saving');
 
     const { data, error } = await supabase
       .from('sales_people')
-      .update({ budget })
+      .update({ [field]: value })
       .eq('id', userId)
       .select('updated_at')
       .maybeSingle();
 
     if (error) {
       console.error('Budget save error:', error);
-      setStatus(userId, 'error');
+      setStatus(key, 'error');
       return false;
-    } else {
-      if (data) {
-        setUsers(prev => prev.map(u => u.id === userId ? { ...u, updated_at: data.updated_at } : u));
-      }
-      setStatus(userId, 'saved');
-      refreshSalesPerson();
-      return true;
     }
-  }, [setStatus, refreshSalesPerson]);
-
-  const handleBudgetChange = useCallback((userId: string, value: string) => {
-    const numValue = parseFloat(value) || 0;
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, budget: numValue } : u));
-
-    if (debounceTimers.current[userId]) {
-      clearTimeout(debounceTimers.current[userId]);
+    if (data) {
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, updated_at: data.updated_at } : u));
     }
+    setStatus(key, 'saved');
+    refreshSalesPerson();
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser) notifyBudgetOwner(targetUser, field, value);
+    return true;
+  }, [setStatus, refreshSalesPerson, users, notifyBudgetOwner]);
 
-    debounceTimers.current[userId] = setTimeout(() => {
-      saveBudget(userId, numValue);
-    }, 700);
+  const handleBudgetChange = useCallback((userId: string, field: BudgetField, valueStr: string) => {
+    const numValue = parseFloat(valueStr) || 0;
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: numValue } : u));
+
+    const key = rk(userId, field);
+    if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
+    debounceTimers.current[key] = setTimeout(() => saveBudget(userId, field, numValue), 700);
   }, [saveBudget]);
+
+  const handleBudgetBlur = useCallback((userId: string, field: BudgetField) => {
+    const key = rk(userId, field);
+    if (debounceTimers.current[key]) {
+      clearTimeout(debounceTimers.current[key]);
+      delete debounceTimers.current[key];
+    }
+    const user = users.find(u => u.id === userId);
+    if (user) {
+      const value = parseFloat(String(user[field])) || 0;
+      saveBudget(userId, field, value);
+    }
+    setFocusedKey(null);
+  }, [users, saveBudget]);
 
   const validateAddFunds = (value: string): string | null => {
     if (!value.trim()) return 'Enter an amount';
@@ -112,11 +144,12 @@ export function BudgetManagement() {
     return null;
   };
 
-  const handleAddFunds = useCallback(async (userId: string) => {
-    const inputValue = addFundsInputs[userId] || '';
+  const handleAddFunds = useCallback(async (userId: string, field: BudgetField) => {
+    const key = rk(userId, field);
+    const inputValue = addFundsInputs[key] || '';
     const validationError = validateAddFunds(inputValue);
     if (validationError) {
-      setAddFundsErrors(prev => ({ ...prev, [userId]: validationError }));
+      setAddFundsErrors(prev => ({ ...prev, [key]: validationError }));
       return;
     }
 
@@ -124,82 +157,83 @@ export function BudgetManagement() {
     const user = users.find(u => u.id === userId);
     if (!user) return;
 
-    const previousBudget = parseFloat(String(user.budget)) || 0;
-    const newBudget = Math.round((previousBudget + amount) * 100) / 100;
+    const previousValue = parseFloat(String(user[field])) || 0;
+    const newValue = Math.round((previousValue + amount) * 100) / 100;
 
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, budget: newBudget } : u));
-
-    const success = await saveBudget(userId, newBudget);
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: newValue } : u));
+    const success = await saveBudget(userId, field, newValue);
 
     if (success) {
-      setAddFundsInputs(prev => ({ ...prev, [userId]: '' }));
-      setAddFundsErrors(prev => ({ ...prev, [userId]: '' }));
-      setAddFundsOpen(prev => ({ ...prev, [userId]: false }));
+      const budgetType = field === 'gas_budget' ? 'gas' : 'regular';
+      logBudgetTransaction(userId, user.user_id, amount, 'credit', budgetType, 'Funds added by admin', newValue);
 
-      if (undoEntries[userId]) {
-        clearTimeout(undoEntries[userId].timer);
-      }
+      setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
+      setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
+      setAddFundsOpen(prev => ({ ...prev, [key]: false }));
+
+      if (undoEntries[key]) clearTimeout(undoEntries[key].timer);
 
       const timer = setTimeout(() => {
         setUndoEntries(prev => {
           const next = { ...prev };
-          delete next[userId];
+          delete next[key];
           return next;
         });
       }, 12000);
 
       setUndoEntries(prev => ({
         ...prev,
-        [userId]: { userId, previousBudget, addedAmount: amount, timer },
+        [key]: { userId, field, previousValue, addedAmount: amount, timer },
       }));
     } else {
-      setUsers(prev => prev.map(u => u.id === userId ? { ...u, budget: previousBudget } : u));
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: previousValue } : u));
     }
   }, [addFundsInputs, users, saveBudget, undoEntries]);
 
-  const handleUndo = useCallback(async (userId: string) => {
-    const entry = undoEntries[userId];
+  const handleUndo = useCallback(async (key: RowKey) => {
+    const entry = undoEntries[key];
     if (!entry) return;
-
     clearTimeout(entry.timer);
 
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, budget: entry.previousBudget } : u));
-    await saveBudget(userId, entry.previousBudget);
+    setUsers(prev => prev.map(u => u.id === entry.userId ? { ...u, [entry.field]: entry.previousValue } : u));
+    await saveBudget(entry.userId, entry.field, entry.previousValue);
 
     setUndoEntries(prev => {
       const next = { ...prev };
-      delete next[userId];
+      delete next[key];
       return next;
     });
   }, [undoEntries, saveBudget]);
 
-  const handleAddFundsInputChange = (userId: string, value: string) => {
-    setAddFundsInputs(prev => ({ ...prev, [userId]: value }));
-    if (addFundsErrors[userId]) {
-      setAddFundsErrors(prev => ({ ...prev, [userId]: '' }));
+  const handleAddFundsInputChange = (key: RowKey, value: string) => {
+    setAddFundsInputs(prev => ({ ...prev, [key]: value }));
+    if (addFundsErrors[key]) {
+      setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
     }
   };
 
-  const handleAddFundsKeyDown = (e: React.KeyboardEvent, userId: string) => {
+  const handleAddFundsKeyDown = (e: React.KeyboardEvent, userId: string, field: BudgetField) => {
+    const key = rk(userId, field);
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleAddFunds(userId);
+      handleAddFunds(userId, field);
     } else if (e.key === 'Escape') {
-      setAddFundsOpen(prev => ({ ...prev, [userId]: false }));
-      setAddFundsInputs(prev => ({ ...prev, [userId]: '' }));
-      setAddFundsErrors(prev => ({ ...prev, [userId]: '' }));
+      setAddFundsOpen(prev => ({ ...prev, [key]: false }));
+      setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
+      setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
     }
   };
 
-  const getPreviewTotal = (userId: string): number | null => {
-    const inputValue = addFundsInputs[userId];
+  const getPreviewTotal = (userId: string, field: BudgetField): number | null => {
+    const key = rk(userId, field);
+    const inputValue = addFundsInputs[key];
     if (!inputValue || !inputValue.trim()) return null;
     const amount = parseFloat(inputValue);
     if (isNaN(amount) || amount <= 0) return null;
     const user = users.find(u => u.id === userId);
     if (!user) return null;
-    const currentBudget = parseFloat(String(user.budget)) || 0;
-    return Math.round((currentBudget + amount) * 100) / 100;
+    const currentValue = parseFloat(String(user[field])) || 0;
+    return Math.round((currentValue + amount) * 100) / 100;
   };
 
   const formatCurrency = (value: number) => {
@@ -233,8 +267,135 @@ export function BudgetManagement() {
     );
   }
 
+  const renderBudgetCell = (user: BudgetUser, field: BudgetField) => {
+    const key = rk(user.id, field);
+    const value = parseFloat(String(user[field])) || 0;
+    const isFocused = focusedKey === key;
+    return (
+      <div className="relative w-36">
+        {isFocused ? (
+          <>
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+            <input
+              type="number"
+              step="0.01"
+              value={user[field]}
+              onChange={(e) => handleBudgetChange(user.id, field, e.target.value)}
+              onBlur={() => handleBudgetBlur(user.id, field)}
+              autoFocus
+              className="w-full pl-7 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all outline-none"
+            />
+          </>
+        ) : (
+          <button
+            onClick={() => setFocusedKey(key)}
+            className={`w-full text-left pl-3 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white hover:border-slate-300 transition-all cursor-text ${
+              value < 0 ? 'text-red-600 font-medium' : 'text-slate-800'
+            }`}
+          >
+            {formatCurrency(value)}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderAddFundsCell = (user: BudgetUser, field: BudgetField) => {
+    const key = rk(user.id, field);
+    const isOpen = addFundsOpen[key] || false;
+    const addInput = addFundsInputs[key] || '';
+    const addError = addFundsErrors[key] || '';
+    const previewTotal = getPreviewTotal(user.id, field);
+    const undoEntry = undoEntries[key];
+    const accent = field === 'gas_budget' ? 'amber' : 'emerald';
+    const accentClasses = field === 'gas_budget'
+      ? { bg: 'bg-amber-50', hoverBg: 'hover:bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', solid: 'bg-amber-600 hover:bg-amber-700', focus: 'focus:ring-amber-500/30 focus:border-amber-400', plus: 'text-amber-600' }
+      : { bg: 'bg-emerald-50', hoverBg: 'hover:bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', solid: 'bg-emerald-600 hover:bg-emerald-700', focus: 'focus:ring-emerald-500/30 focus:border-emerald-400', plus: 'text-emerald-600' };
+
+    return (
+      <div className="flex flex-col gap-1">
+        {!isOpen ? (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAddFundsOpen(prev => ({ ...prev, [key]: true }))}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium ${accentClasses.text} ${accentClasses.bg} ${accentClasses.hoverBg} border ${accentClasses.border} rounded-lg transition-colors`}
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              Add
+            </button>
+            {undoEntry && (
+              <button
+                onClick={() => handleUndo(key)}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors animate-pulse"
+                title={`Undo +${formatCurrency(undoEntry.addedAmount)}`}
+              >
+                <Undo2 className="w-3 h-3" />
+                Undo +{formatCurrency(undoEntry.addedAmount)}
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              <div className="relative">
+                <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${accentClasses.plus} text-sm font-medium`}>+$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="0.00"
+                  value={addInput}
+                  onChange={(e) => handleAddFundsInputChange(key, e.target.value)}
+                  onKeyDown={(e) => handleAddFundsKeyDown(e, user.id, field)}
+                  autoFocus
+                  className={`w-24 pl-8 pr-2 py-1.5 text-sm border rounded-lg bg-white focus:ring-2 ${accentClasses.focus} transition-all outline-none ${
+                    addError ? 'border-red-300' : 'border-slate-200'
+                  }`}
+                />
+              </div>
+              <button
+                onClick={() => handleAddFunds(user.id, field)}
+                className={`px-2.5 py-1.5 text-sm font-medium text-white ${accentClasses.solid} rounded-lg transition-colors`}
+              >
+                Add
+              </button>
+              <button
+                onClick={() => {
+                  setAddFundsOpen(prev => ({ ...prev, [key]: false }));
+                  setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
+                  setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {addError && <span className="text-xs text-red-600">{addError}</span>}
+            {previewTotal !== null && (
+              <span className={`text-xs ${accent === 'amber' ? 'text-amber-600' : 'text-emerald-600'} font-medium`}>
+                New Total: {formatCurrency(previewTotal)}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderStatusCell = (user: BudgetUser, field: BudgetField) => {
+    const key = rk(user.id, field);
+    const status = rowStatuses[key] || 'idle';
+    return (
+      <div className="w-5 h-5 flex items-center justify-center">
+        {status === 'saving' && <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />}
+        {status === 'saved' && <Check className="w-4 h-4 text-emerald-500" />}
+        {status === 'error' && <AlertCircle className="w-4 h-4 text-red-500" />}
+      </div>
+    );
+  };
+
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       <div className="flex items-center gap-2 mb-6">
         <DollarSign className="w-5 h-5 text-emerald-600" />
         <h2 className="text-lg font-semibold text-slate-900">Budget Management</h2>
@@ -246,142 +407,46 @@ export function BudgetManagement() {
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50/60">
               <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Name</th>
-              <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Budget</th>
-              <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add Funds</th>
+              <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <span className="inline-flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-600" /> Regular Budget
+                </span>
+              </th>
+              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add</th>
+              <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                <span className="inline-flex items-center gap-1.5">
+                  <Fuel className="w-3.5 h-3.5 text-amber-600" /> Gas Budget
+                </span>
+              </th>
+              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add</th>
               <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Updated</th>
-              <th className="w-10"></th>
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => {
-              const status = rowStatuses[user.id] || 'idle';
-              const isAddOpen = addFundsOpen[user.id] || false;
-              const addInput = addFundsInputs[user.id] || '';
-              const addError = addFundsErrors[user.id] || '';
-              const previewTotal = getPreviewTotal(user.id);
-              const undoEntry = undoEntries[user.id];
-
-              return (
-                <tr key={user.id} className="border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors">
-                  <td className="py-3 px-5">
-                    <span className="font-medium text-slate-800">{user.name}</span>
-                  </td>
-                  <td className="py-3 px-5">
-                    <div className="relative w-40">
-                      {focusedBudgetId === user.id ? (
-                        <>
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={user.budget}
-                            onChange={(e) => handleBudgetChange(user.id, e.target.value)}
-                            onBlur={() => setFocusedBudgetId(null)}
-                            autoFocus
-                            className="w-full pl-7 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all outline-none"
-                          />
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => setFocusedBudgetId(user.id)}
-                          className={`w-full text-left pl-3 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white hover:border-slate-300 transition-all cursor-text ${
-                            user.budget < 0 ? 'text-red-600 font-medium' : 'text-slate-800'
-                          }`}
-                        >
-                          {formatCurrency(user.budget)}
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-5">
-                    <div className="flex flex-col gap-1">
-                      {!isAddOpen ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setAddFundsOpen(prev => ({ ...prev, [user.id]: true }))}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors"
-                          >
-                            <PlusCircle className="w-3.5 h-3.5" />
-                            Add Funds
-                          </button>
-                          {undoEntry && (
-                            <button
-                              onClick={() => handleUndo(user.id)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors animate-pulse"
-                              title={`Undo +${formatCurrency(undoEntry.addedAmount)}`}
-                            >
-                              <Undo2 className="w-3 h-3" />
-                              Undo +{formatCurrency(undoEntry.addedAmount)}
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-1.5">
-                            <div className="relative">
-                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-emerald-600 text-sm font-medium">+$</span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                placeholder="0.00"
-                                value={addInput}
-                                onChange={(e) => handleAddFundsInputChange(user.id, e.target.value)}
-                                onKeyDown={(e) => handleAddFundsKeyDown(e, user.id)}
-                                autoFocus
-                                className={`w-28 pl-8 pr-2 py-1.5 text-sm border rounded-lg bg-white focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 transition-all outline-none ${
-                                  addError ? 'border-red-300' : 'border-slate-200'
-                                }`}
-                              />
-                            </div>
-                            <button
-                              onClick={() => handleAddFunds(user.id)}
-                              className="px-2.5 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
-                            >
-                              Add
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAddFundsOpen(prev => ({ ...prev, [user.id]: false }));
-                                setAddFundsInputs(prev => ({ ...prev, [user.id]: '' }));
-                                setAddFundsErrors(prev => ({ ...prev, [user.id]: '' }));
-                              }}
-                              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                            >
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          {addError && (
-                            <span className="text-xs text-red-600">{addError}</span>
-                          )}
-                          {previewTotal !== null && (
-                            <span className="text-xs text-emerald-600 font-medium">
-                              New Total: {formatCurrency(previewTotal)}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-5 text-sm text-slate-500">
-                    {formatDate(user.updated_at)}
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="w-5 h-5 flex items-center justify-center">
-                      {status === 'saving' && (
-                        <Loader2 className="w-4 h-4 text-slate-400 animate-spin" />
-                      )}
-                      {status === 'saved' && (
-                        <Check className="w-4 h-4 text-emerald-500" />
-                      )}
-                      {status === 'error' && (
-                        <AlertCircle className="w-4 h-4 text-red-500" />
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            {users.map((user) => (
+              <tr key={user.id} className="border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors align-top">
+                <td className="py-3 px-5">
+                  <span className="font-medium text-slate-800">{user.name}</span>
+                </td>
+                <td className="py-3 px-5">{renderBudgetCell(user, 'budget')}</td>
+                <td className="py-3 px-3">
+                  <div className="flex items-start gap-2">
+                    {renderAddFundsCell(user, 'budget')}
+                    {renderStatusCell(user, 'budget')}
+                  </div>
+                </td>
+                <td className="py-3 px-5">{renderBudgetCell(user, 'gas_budget')}</td>
+                <td className="py-3 px-3">
+                  <div className="flex items-start gap-2">
+                    {renderAddFundsCell(user, 'gas_budget')}
+                    {renderStatusCell(user, 'gas_budget')}
+                  </div>
+                </td>
+                <td className="py-3 px-5 text-sm text-slate-500">
+                  {formatDate(user.updated_at)}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

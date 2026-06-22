@@ -23,6 +23,7 @@ interface ModuleDefinition {
   label: string;
   description: string;
   special?: boolean;
+  superAdminOnly?: boolean;
 }
 
 const AVAILABLE_MODULES: ModuleDefinition[] = [
@@ -44,7 +45,7 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'resources', label: 'Resources', description: 'View company resources' },
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
   { name: 'manage_announcements', label: 'Manage Announcements', description: 'Create and manage announcements' },
-  { name: 'employee_communication', label: 'Office Communication', description: 'Send emails and texts to employees' },
+  { name: 'employee_communication', label: 'Manage Office Communications', description: 'Manage groups and send emails/texts to employees (super admin only)', superAdminOnly: true },
   { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
   { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page for this user', special: true },
   { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit budget amount for this user', special: true },
@@ -315,7 +316,11 @@ export function ModulePermissionsManager() {
           {/* Regular Module Permissions */}
           <h3 className="text-lg font-bold text-slate-900 mb-3">Module Access</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-            {AVAILABLE_MODULES.filter(m => !m.special).map((module) => (
+            {AVAILABLE_MODULES.filter(m => {
+              if (m.special) return false;
+              if (m.superAdminOnly && selectedUserData?.role !== 'super_admin') return false;
+              return true;
+            }).map((module) => (
               <button
                 key={module.name}
                 onClick={() => togglePermission(selectedUser, module.name)}

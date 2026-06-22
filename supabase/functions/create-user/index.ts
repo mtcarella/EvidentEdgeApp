@@ -1,57 +1,26 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
-};
+import { corsHeaders, jsonResponse, requireCaller } from '../_shared/auth.ts';
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  const auth = await requireCaller(req, { requireRoles: ['admin', 'super_admin'] });
+  if (!auth.ok) return auth.response;
+  const { supabase: supabaseAdmin } = auth;
+
   try {
-    const supabaseAdmin = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
-
-    const authHeader = req.headers.get('Authorization')!;
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user: requestingUser } } = await supabaseAdmin.auth.getUser(token);
-
-    if (!requestingUser) {
-      throw new Error('Unauthorized');
-    }
-
-    const { data: requestingUserProfile } = await supabaseAdmin
-      .from('sales_people')
-      .select('role')
-      .eq('user_id', requestingUser.id)
-      .single();
-
-    if (!requestingUserProfile || (requestingUserProfile.role !== 'admin' && requestingUserProfile.role !== 'super_admin')) {
-      throw new Error('Forbidden: Admin access required');
-    }
-
     const { name, email, cell_phone, password, role } = await req.json();
 
     if (!name || !email || !password || !role) {
-      throw new Error('Missing required fields');
+      return jsonResponse({ error: 'Missing required fields' }, 400);
     }
-
     if (password.length < 6) {
-      throw new Error('Password must be at least 6 characters');
+      return jsonResponse({ error: 'Password must be at least 6 characters' }, 400);
+    }
+    const allowedRoles = ['salesperson', 'closer', 'processor', 'admin', 'super_admin', 'sales_processor'];
+    if (!allowedRoles.includes(role)) {
+      return jsonResponse({ error: 'Invalid role' }, 400);
     }
 
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -60,8 +29,8 @@ Deno.serve(async (req: Request) => {
       email_confirm: true,
     });
 
-    if (authError) throw authError;
-    if (!authData.user) throw new Error('Failed to create user');
+    if (authError) return jsonResponse({ error: authError.message }, 400);
+    if (!authData.user) return jsonResponse({ error: 'Failed to create user' }, 500);
 
     const { data: newUser, error: profileError } = await supabaseAdmin
       .from('sales_people')
@@ -78,7 +47,7 @@ Deno.serve(async (req: Request) => {
 
     if (profileError) {
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      throw profileError;
+      return jsonResponse({ error: profileError.message }, 500);
     }
 
     const defaultModules = [
@@ -86,10 +55,10 @@ Deno.serve(async (req: Request) => {
       'contact_search',
       'submit_performance_report',
       'resources',
-      'conflict_check'
+      'conflict_check',
     ];
 
-    const defaultPermissions = defaultModules.map(module => ({
+    const defaultPermissions = defaultModules.map((module) => ({
       user_id: newUser.id,
       module_name: module,
       has_access: true,
@@ -103,26 +72,9 @@ Deno.serve(async (req: Request) => {
       console.error('Error creating default permissions:', permissionsError);
     }
 
-    return new Response(
-      JSON.stringify({ success: true, message: 'User created successfully' }),
-      {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    return jsonResponse({ success: true, message: 'User created successfully' });
   } catch (error: any) {
-    console.error('Error creating user:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 400,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    console.error('Error creating user:', error?.message ?? error);
+    return jsonResponse({ error: 'Internal error' }, 500);
   }
 });

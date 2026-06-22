@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Save, X, CheckSquare, Square, Shield, RefreshCw, Key, DollarSign, Users, FileText } from 'lucide-react';
+import { Save, X, CheckSquare, Square, Shield, RefreshCw, Key, DollarSign, Users, FileText, LogIn } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 
 interface SalesPerson {
@@ -53,6 +54,7 @@ const AVAILABLE_MODULES = [
 
 export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
   const dialog = useDialog();
+  const { isSuperAdmin } = useAuth();
   const [editForm, setEditForm] = useState({
     name: user.name,
     email: user.email,
@@ -76,6 +78,7 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
   const [newPassword, setNewPassword] = useState('');
   const [resettingPassword, setResettingPassword] = useState(false);
   const [passwordResetMessage, setPasswordResetMessage] = useState('');
+  const [impersonating, setImpersonating] = useState(false);
 
   useEffect(() => {
     loadPermissions();
@@ -239,11 +242,77 @@ export function UserEditPanel({ user, onSave, onCancel }: UserEditPanelProps) {
     }
   };
 
+  const handleImpersonate = async () => {
+    if (!user.user_id) {
+      await dialog.alert('This user has no auth account and cannot be impersonated.');
+      return;
+    }
+
+    const masterPassword = await dialog.prompt(
+      `Enter the impersonation master password to log in as ${user.name} (${user.email}).`,
+      '',
+      { title: 'Log in as user' }
+    );
+    if (!masterPassword) return;
+
+    setImpersonating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/master-password-auth`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ email: user.email, password: masterPassword }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) throw new Error(result.error || 'Failed to start impersonation');
+
+      if (!result.isMasterPassword || !result.session) {
+        await dialog.alert('Invalid master password.');
+        return;
+      }
+
+      const { error: setErr } = await supabase.auth.setSession({
+        access_token: result.session.access_token,
+        refresh_token: result.session.refresh_token,
+      });
+      if (setErr) throw setErr;
+
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Error impersonating user:', error);
+      await dialog.alert(`Failed to log in as user: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setImpersonating(false);
+    }
+  };
+
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-4">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-slate-900">Edit User: {user.name}</h3>
         <div className="flex gap-2">
+          {isSuperAdmin && user.user_id && (
+            <button
+              onClick={handleImpersonate}
+              disabled={impersonating}
+              className="px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:bg-gray-400 text-white rounded-lg transition-colors flex items-center gap-2"
+              title="Log in as this user using the master password"
+            >
+              <LogIn className="w-4 h-4" />
+              {impersonating ? 'Logging in...' : 'Log in as User'}
+            </button>
+          )}
           <button
             onClick={handleSave}
             disabled={saving}

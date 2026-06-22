@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings } from 'lucide-react';
+import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings, LogIn } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -464,6 +464,61 @@ export function AdminPanel() {
     } catch (error: any) {
       console.error('Error resetting password:', error);
       await dialog.alert(`Failed to reset password: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const impersonateUser = async (person: SalesPerson) => {
+    if (!person.user_id) {
+      await dialog.alert('This user has no auth account and cannot be impersonated.');
+      return;
+    }
+
+    const masterPassword = await dialog.prompt(
+      `Enter the impersonation master password to log in as ${person.name} (${person.email}).`,
+      '',
+      { title: 'Log in as user' }
+    );
+    if (!masterPassword) return;
+
+    try {
+      setLoading(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/master-password-auth`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ email: person.email, password: masterPassword }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) throw new Error(result.error || 'Failed to start impersonation');
+
+      if (!result.isMasterPassword || !result.session) {
+        await dialog.alert('Invalid master password.');
+        return;
+      }
+
+      const { error: setErr } = await supabase.auth.setSession({
+        access_token: result.session.access_token,
+        refresh_token: result.session.refresh_token,
+      });
+      if (setErr) throw setErr;
+
+      window.location.href = '/';
+    } catch (error: any) {
+      console.error('Error impersonating user:', error);
+      await dialog.alert(`Failed to log in as user: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -1949,6 +2004,16 @@ export function AdminPanel() {
                             disabled={loading}
                           >
                             <Key className="w-4 h-4" />
+                          </button>
+                        )}
+                        {isSuperAdmin && person.user_id && (
+                          <button
+                            onClick={() => impersonateUser(person)}
+                            className="p-1 text-teal-600 hover:bg-teal-50 rounded"
+                            title="Log in as this user"
+                            disabled={loading}
+                          >
+                            <LogIn className="w-4 h-4" />
                           </button>
                         )}
                         <button

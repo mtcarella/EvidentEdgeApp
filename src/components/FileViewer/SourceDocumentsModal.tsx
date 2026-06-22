@@ -94,7 +94,6 @@ export function SourceDocumentsModal({ isOpen, onClose, fieldName, fieldLabel, f
 
   const openPreview = async (doc: SourceDocument) => {
     let signedUrl = '';
-
     let resolvedPath = '';
 
     if (fileId && doc.document_type) {
@@ -104,7 +103,9 @@ export function SourceDocumentsModal({ isOpen, onClose, fieldName, fieldLabel, f
         const { data, error: signError } = await supabase.storage
           .from('documents')
           .createSignedUrl(storageName, 3600);
-        if (!signError && data?.signedUrl) {
+        if (signError) {
+          console.error('[SourceDocuments] Signed URL error for', storageName, signError);
+        } else if (data?.signedUrl) {
           signedUrl = data.signedUrl;
         }
       }
@@ -115,9 +116,15 @@ export function SourceDocumentsModal({ isOpen, onClose, fieldName, fieldLabel, f
       const { data, error: signError } = await supabase.storage
         .from('documents')
         .createSignedUrl(doc.intake_filename, 3600);
-      if (!signError && data?.signedUrl) {
+      if (signError) {
+        console.error('[SourceDocuments] Signed URL error for', doc.intake_filename, signError);
+      } else if (data?.signedUrl) {
         signedUrl = data.signedUrl;
       }
+    }
+
+    if (!signedUrl) {
+      console.error('[SourceDocuments] Could not generate a signed URL for document:', doc.document_name, '| fileId:', fileId, '| type:', doc.document_type);
     }
 
     setDocUrl(signedUrl);

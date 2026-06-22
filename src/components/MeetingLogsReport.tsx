@@ -7,7 +7,9 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString, getESTToday, formatDateWithWeekday, formatDateShort } from '../lib/dateUtils';
 import { convertToJpeg, isImageFile } from '../lib/imageUtils';
-import { adjustBudget, restoreBudget, formatCurrency } from '../lib/budgetUtils';
+import { adjustBudget, restoreBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
+import { MeetingExpenseReceipts, type MeetingExpense } from './MeetingExpenseReceipts';
+import { buildReceiptFilename, formatDateForFilename } from './ExpenseListEditor';
 
 interface MeetingReceipt {
   id: string;
@@ -32,6 +34,7 @@ interface MeetingLog {
   expense_amount?: number;
   receipt_url?: string;
   receipts?: MeetingReceipt[];
+  expenses?: MeetingExpense[];
   meeting_group_id?: string | null;
   is_primary_for_expense?: boolean;
   contact: {
@@ -148,6 +151,7 @@ export function MeetingLogsReport() {
           expense_amount,
           receipt_url,
           receipts:meeting_receipts(id, file_path, file_name, created_at, created_by),
+          expenses:meeting_expenses(id, description, amount, category, notes, receipt_path, receipt_name, receipt_original_name, receipt_size, receipt_type, receipt_uploaded_at, created_at, created_by),
           meeting_group_id,
           is_primary_for_expense,
           contact:contacts(name, type, company, email, phone),
@@ -374,9 +378,10 @@ export function MeetingLogsReport() {
       const oldExpenseAmount = (editingMeeting.has_expense && editingMeeting.expense_amount) ? editingMeeting.expense_amount : 0;
       const newExpenseAmount = (editFormData.has_expense && editFormData.expense_amount) ? parseFloat(editFormData.expense_amount) : 0;
       if (oldExpenseAmount !== newExpenseAmount) {
-        const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount);
+        const budgetType = getBudgetTypeForContact(editingMeeting.contact?.name);
+        const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount, budgetType);
         if (result.exceeded && result.newBalance !== null) {
-          setBudgetWarning(`Budget exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setBudgetWarning(`Warning: ${getBudgetLabel(budgetType)} exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
       }
@@ -409,7 +414,7 @@ export function MeetingLogsReport() {
       }
 
       if (expenseToRestore > 0) {
-        await restoreBudget(meeting.salesperson_id, expenseToRestore);
+        await restoreBudget(meeting.salesperson_id, expenseToRestore, getBudgetTypeForContact(meeting.contact?.name));
       }
 
       loadMeetings();
@@ -518,7 +523,11 @@ export function MeetingLogsReport() {
   const exportReceipts = async () => {
     const meetingsWithReceipts = filteredMeetings.filter(m =>
       m.is_primary_for_expense !== false &&
-      ((m.receipts && m.receipts.length > 0) || m.receipt_url)
+      (
+        (m.expenses && m.expenses.some(e => e.receipt_path)) ||
+        (m.receipts && m.receipts.length > 0) ||
+        m.receipt_url
+      )
     );
 
     if (meetingsWithReceipts.length === 0) {
@@ -531,71 +540,198 @@ export function MeetingLogsReport() {
       let successCount = 0;
       let failCount = 0;
       const usedFilenames = new Map<string, number>();
+      const summaryRows: Record<string, string | number>[] = [];
+
+      const uniqueName = (name: string): string => {
+        const dot = name.lastIndexOf('.');
+        const base = dot >= 0 ? name.slice(0, dot) : name;
+        const ext = dot >= 0 ? name.slice(dot) : '';
+        const count = usedFilenames.get(name) || 0;
+        usedFilenames.set(name, count + 1);
+        return count > 0 ? `${base}_${count + 1}${ext}` : name;
+      };
 
       for (const meeting of meetingsWithReceipts) {
-        const receiptsToDownload: { path: string; index: number }[] = [];
+        const expenseReceipts = (meeting.expenses || []).filter(e => e.receipt_path);
 
-        if (meeting.receipts && meeting.receipts.length > 0) {
-          meeting.receipts.forEach((r, idx) => {
-            receiptsToDownload.push({ path: r.file_path, index: idx + 1 });
-          });
-        } else if (meeting.receipt_url) {
-          receiptsToDownload.push({ path: meeting.receipt_url, index: 1 });
-        }
+        for (const exp of expenseReceipts) {
+          const renamed = exp.receipt_name || buildReceiptFilename(
+            {
+              date: meeting.meeting_date,
+              username: meeting.salesperson?.name,
+              contactName: meeting.contact?.name,
+              description: exp.description ?? undefined,
+            },
+            exp.receipt_original_name || exp.receipt_path || 'receipt',
+          );
+          const finalName = uniqueName(renamed);
+          let status = 'included';
 
-        for (const receipt of receiptsToDownload) {
           try {
             const { data: fileData, error: downloadError } = await supabase.storage
               .from('receipts')
-              .download(receipt.path);
-
-            if (downloadError) {
-              throw downloadError;
-            }
-
-            if (fileData) {
-              const fileExtension = receipt.path.split('.').pop() || 'jpg';
-              const meetingDate = new Date(meeting.meeting_date);
-              const month = String(meetingDate.getMonth() + 1).padStart(2, '0');
-              const day = String(meetingDate.getDate()).padStart(2, '0');
-              const year = meetingDate.getFullYear();
-              const receiptSuffix = receiptsToDownload.length > 1 ? `_receipt${receipt.index}` : '';
-              const baseFileName = `${month}-${day}-${year}_${meeting.salesperson.name.replace(/\s+/g, '_')}_${meeting.contact.name.replace(/\s+/g, '_')}${receiptSuffix}`;
-
-              const count = usedFilenames.get(baseFileName) || 0;
-              usedFilenames.set(baseFileName, count + 1);
-              const uniqueSuffix = count > 0 ? `_${count + 1}` : '';
-              const fileName = `${baseFileName}${uniqueSuffix}.${fileExtension}`;
-
-              zip.file(fileName, fileData);
-              successCount++;
-            }
+              .download(exp.receipt_path as string);
+            if (downloadError || !fileData) throw downloadError || new Error('Missing file');
+            zip.file(finalName, fileData);
+            successCount++;
           } catch (error) {
-            console.error(`Failed to download receipt for meeting ${meeting.id}:`, error);
+            console.error(`Failed to download expense receipt for meeting ${meeting.id}:`, error);
             failCount++;
+            status = 'file missing';
+          }
+
+          summaryRows.push({
+            Date: formatDateShort(meeting.meeting_date),
+            Username: meeting.salesperson?.name || '',
+            'Contact Name': meeting.contact?.name || '',
+            Description: exp.description || '',
+            Category: exp.category || '',
+            'Payment Method': meeting.expense_payment_method === 'personal' ? 'Personal' : meeting.expense_payment_method === 'company' ? 'Company' : '',
+            Amount: exp.amount != null ? Number(exp.amount).toFixed(2) : '',
+            'Original Filename': exp.receipt_original_name || '',
+            'Renamed Filename': status === 'included' ? finalName : '',
+            'Uploaded At': exp.receipt_uploaded_at ? formatTimestampForDisplay(exp.receipt_uploaded_at) : '',
+            Notes: exp.notes || '',
+            Status: status,
+          });
+        }
+
+        if (expenseReceipts.length === 0) {
+          const legacy: { path: string; index: number }[] = [];
+          if (meeting.receipts && meeting.receipts.length > 0) {
+            meeting.receipts.forEach((r, idx) => legacy.push({ path: r.file_path, index: idx + 1 }));
+          } else if (meeting.receipt_url) {
+            legacy.push({ path: meeting.receipt_url, index: 1 });
+          }
+
+          for (const r of legacy) {
+            const ext = r.path.split('.').pop() || 'jpg';
+            const suffix = legacy.length > 1 ? `receipt-${r.index}` : undefined;
+            const renamed = buildReceiptFilename(
+              {
+                date: meeting.meeting_date,
+                username: meeting.salesperson?.name,
+                contactName: meeting.contact?.name,
+                description: suffix,
+              },
+              `receipt.${ext}`,
+            );
+            const finalName = uniqueName(renamed);
+            let status = 'included';
+
+            try {
+              const { data: fileData, error: downloadError } = await supabase.storage
+                .from('receipts')
+                .download(r.path);
+              if (downloadError || !fileData) throw downloadError || new Error('Missing file');
+              zip.file(finalName, fileData);
+              successCount++;
+            } catch (error) {
+              console.error(`Failed to download receipt for meeting ${meeting.id}:`, error);
+              failCount++;
+              status = 'file missing';
+            }
+
+            summaryRows.push({
+              Date: formatDateShort(meeting.meeting_date),
+              Username: meeting.salesperson?.name || '',
+              'Contact Name': meeting.contact?.name || '',
+              Description: '',
+              Category: '',
+              'Payment Method': meeting.expense_payment_method === 'personal' ? 'Personal' : meeting.expense_payment_method === 'company' ? 'Company' : '',
+              Amount: '',
+              'Original Filename': r.path.split('/').pop() || '',
+              'Renamed Filename': status === 'included' ? finalName : '',
+              'Uploaded At': '',
+              Notes: '',
+              Status: status,
+            });
           }
         }
       }
 
-      if (successCount === 0) {
-        await dialog.alert('Failed to download any receipts. Please try again.');
-        return;
+      // Sort by username then date
+      summaryRows.sort((a, b) => {
+        const nameA = (a.Username as string).toLowerCase();
+        const nameB = (b.Username as string).toLowerCase();
+        if (nameA !== nameB) return nameA.localeCompare(nameB);
+        return (a.Date as string).localeCompare(b.Date as string);
+      });
+
+      // Build grouped rows with subtotals per username
+      const groupedRows: Record<string, string | number>[] = [];
+      let currentUser = '';
+      let userTotal = 0;
+
+      for (const row of summaryRows) {
+        const username = row.Username as string;
+        if (username !== currentUser) {
+          if (currentUser && userTotal > 0) {
+            groupedRows.push({
+              Date: '',
+              Username: `TOTAL - ${currentUser}`,
+              'Contact Name': '',
+              Description: '',
+              Category: '',
+              'Payment Method': '',
+              Amount: userTotal.toFixed(2),
+              'Original Filename': '',
+              'Renamed Filename': '',
+              'Uploaded At': '',
+              Notes: '',
+              Status: '',
+            });
+            groupedRows.push({
+              Date: '', Username: '', 'Contact Name': '', Description: '',
+              Category: '', 'Payment Method': '', Amount: '',
+              'Original Filename': '', 'Renamed Filename': '',
+              'Uploaded At': '', Notes: '', Status: '',
+            });
+          }
+          currentUser = username;
+          userTotal = 0;
+        }
+        const amt = row.Amount ? parseFloat(row.Amount as string) : 0;
+        userTotal += amt;
+        groupedRows.push(row);
       }
+      if (currentUser && userTotal > 0) {
+        groupedRows.push({
+          Date: '',
+          Username: `TOTAL - ${currentUser}`,
+          'Contact Name': '',
+          Description: '',
+          Category: '',
+          'Payment Method': '',
+          Amount: userTotal.toFixed(2),
+          'Original Filename': '',
+          'Renamed Filename': '',
+          'Uploaded At': '',
+          Notes: '',
+          Status: '',
+        });
+      }
+
+      const worksheet = XLSX.utils.json_to_sheet(groupedRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Receipts');
+      const summaryBuffer = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+      zip.file('receipts_summary.xlsx', summaryBuffer);
 
       const content = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `receipts_${startDate}_to_${endDate}.zip`;
+      a.download = `receipts_export_${formatDateForFilename(getTodayDateString())}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
       if (failCount > 0) {
-        await dialog.alert(`Successfully downloaded ${successCount} receipt(s). ${failCount} receipt(s) failed to download.`);
+        await dialog.alert(`Exported ${successCount} receipt(s) with a summary. ${failCount} file(s) were missing and are listed in the summary.`);
       } else {
-        await dialog.alert(`Successfully downloaded ${successCount} receipt(s).`);
+        await dialog.alert(`Exported ${successCount} receipt(s) with a summary.`);
       }
     } catch (error) {
       console.error('Error exporting receipts:', error);
@@ -682,7 +818,7 @@ export function MeetingLogsReport() {
             {isAdmin && (
               <button
                 onClick={exportReceipts}
-                disabled={filteredMeetings.filter(m => m.is_primary_for_expense !== false && ((m.receipts && m.receipts.length > 0) || m.receipt_url)).length === 0}
+                disabled={filteredMeetings.filter(m => m.is_primary_for_expense !== false && ((m.expenses && m.expenses.some(e => e.receipt_path)) || (m.receipts && m.receipts.length > 0) || m.receipt_url)).length === 0}
                 className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
                 title="Export all receipts as ZIP (excluding duplicates from grouped meetings)"
               >
@@ -942,7 +1078,7 @@ export function MeetingLogsReport() {
                       {meeting.has_expense && meeting.is_primary_for_expense !== false && (
                         <div className="bg-yellow-50 rounded-lg p-3 border border-yellow-200 mt-3">
                           <p className="text-sm font-semibold text-yellow-900 mb-2">Expense Details:</p>
-                          <div className="flex items-center gap-4 flex-wrap">
+                          <div className="flex items-center gap-4 flex-wrap mb-3">
                             {meeting.expense_amount ? (
                               <div className="flex items-center gap-1">
                                 <DollarSign className="w-5 h-5 text-yellow-700" />
@@ -953,7 +1089,7 @@ export function MeetingLogsReport() {
                             ) : (
                               <span className="text-sm text-yellow-700">Amount not specified</span>
                             )}
-                            {meeting.receipts && meeting.receipts.length > 0 ? (
+                            {meeting.receipts && meeting.receipts.length > 0 && (
                               <div className="flex flex-wrap gap-2">
                                 {meeting.receipts.map((receipt, index) => (
                                   <button
@@ -966,7 +1102,8 @@ export function MeetingLogsReport() {
                                   </button>
                                 ))}
                               </div>
-                            ) : meeting.receipt_url ? (
+                            )}
+                            {(!meeting.receipts || meeting.receipts.length === 0) && meeting.receipt_url && (
                               <button
                                 onClick={() => handleViewReceipt(meeting)}
                                 className="flex items-center gap-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors font-medium text-sm"
@@ -974,10 +1111,20 @@ export function MeetingLogsReport() {
                                 <Eye className="w-4 h-4" />
                                 View Receipt
                               </button>
-                            ) : (
-                              <span className="text-sm text-yellow-700 italic">No receipt uploaded</span>
                             )}
                           </div>
+                          <MeetingExpenseReceipts
+                            meetingId={meeting.id}
+                            meetingDate={meeting.meeting_date}
+                            meetingExpenseAmount={meeting.expense_amount ?? null}
+                            salespersonId={meeting.salesperson_id}
+                            contactName={meeting.contact?.name ?? ''}
+                            username={meeting.salesperson?.name ?? ''}
+                            expenses={meeting.expenses || []}
+                            canEdit={canEditMeeting(meeting)}
+                            currentUserId={salesPerson?.user_id}
+                            onChanged={loadMeetings}
+                          />
                         </div>
                       )}
                       {meeting.has_expense && meeting.is_primary_for_expense === false && (

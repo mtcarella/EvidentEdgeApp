@@ -115,12 +115,15 @@ export function DocumentPreview({ isOpen, onClose, fileUrl, fileName, fileType, 
     setShowVersionHistory(false);
     setViewingVersion(null);
     setVersions([]);
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      setBlobUrl(null);
-    }
+    setBlobUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
     if (fileUrl) {
       setLoadingContent(true);
+    } else {
+      setLoadError('failed');
+      console.error('[DocumentPreview] Opened with empty fileUrl — signed URL generation likely failed');
     }
   }, [isOpen, fileUrl]);
 
@@ -163,29 +166,29 @@ export function DocumentPreview({ isOpen, onClose, fileUrl, fileName, fileType, 
     if (!fileUrl) return;
     setLoadingContent(true);
     setLoadError(null);
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl);
-      setBlobUrl(null);
-    }
 
     try {
       if (category === 'pdf' || category === 'image') {
         const res = await fetch(fileUrl);
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        if (!res.ok) throw new Error(`Server returned ${res.status} ${res.statusText}`);
         const blob = await res.blob();
+        if (blob.size === 0) throw new Error('Received empty file (0 bytes)');
         const mimeType = category === 'pdf' ? 'application/pdf'
           : (blob.type.startsWith('image/') ? blob.type : 'image/png');
         const typedBlob = blob.type === mimeType ? blob : new Blob([blob], { type: mimeType });
         const url = URL.createObjectURL(typedBlob);
-        setBlobUrl(url);
+        setBlobUrl(prev => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
       } else if (category === 'text') {
         const res = await fetch(fileUrl);
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        if (!res.ok) throw new Error(`Server returned ${res.status} ${res.statusText}`);
         const text = await res.text();
         setTextContent(text);
       } else if (category === 'spreadsheet') {
         const res = await fetch(fileUrl);
-        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        if (!res.ok) throw new Error(`Server returned ${res.status} ${res.statusText}`);
         const buf = await res.arrayBuffer();
         const workbook = XLSX.read(buf, { type: 'array' });
         const html = workbook.SheetNames.map(name => {
@@ -195,9 +198,13 @@ export function DocumentPreview({ isOpen, onClose, fileUrl, fileName, fileType, 
         }).join('');
         setSpreadsheetHtml(html);
       }
-    } catch {
+    } catch (err) {
+      console.error('[DocumentPreview] Failed to load file:', err, '| URL:', fileUrl?.substring(0, 120));
       setLoadError('failed');
-      setBlobUrl(null);
+      setBlobUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
     } finally {
       setLoadingContent(false);
     }

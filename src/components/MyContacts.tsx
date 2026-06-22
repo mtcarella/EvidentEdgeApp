@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, Upload, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle, Navigation } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle, Navigation } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -9,8 +9,8 @@ import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
 import { formatDateShort, getESTToday, getTodayDateString } from '../lib/dateUtils';
-import { convertToJpeg, isImageFile } from '../lib/imageUtils';
-import { deductBudget, formatCurrency } from '../lib/budgetUtils';
+import { deductBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
+import { ExpenseListEditor, ExpenseDraft, expensesValid, expensesTotal, buildReceiptFilename } from './ExpenseListEditor';
 import * as XLSX from 'xlsx';
 
 interface Contact {
@@ -59,6 +59,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [salesPeople, setSalesPeople] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnceRef = useRef(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Contact>>({});
@@ -79,8 +80,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   const [quickMeetingIsEmail, setQuickMeetingIsEmail] = useState(false);
   const [quickMeetingHasExpense, setQuickMeetingHasExpense] = useState<boolean | null>(null);
   const [quickMeetingExpenseMethod, setQuickMeetingExpenseMethod] = useState('');
-  const [quickMeetingExpenseAmount, setQuickMeetingExpenseAmount] = useState('');
-  const [quickMeetingReceiptFiles, setQuickMeetingReceiptFiles] = useState<File[]>([]);
+  const [quickMeetingExpenses, setQuickMeetingExpenses] = useState<ExpenseDraft[]>([]);
   const [quickMeetingSaving, setQuickMeetingSaving] = useState(false);
   const [quickMeetingAdditionalContacts, setQuickMeetingAdditionalContacts] = useState<Set<string>>(new Set());
   const [showQuickMeetingAdditionalContacts, setShowQuickMeetingAdditionalContacts] = useState(false);
@@ -101,9 +101,10 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   }, []);
 
   useEffect(() => {
+    if (!salesPerson?.id) return;
     loadContacts();
     loadSalesPeopleList();
-  }, [salesPerson]);
+  }, [salesPerson?.id]);
 
   const loadSalesPeopleList = async () => {
     const { data } = await supabase
@@ -116,7 +117,9 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   const loadContacts = async () => {
     if (!salesPerson?.id) return;
 
-    setLoading(true);
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     try {
       const { data: sharedAccess } = await supabase
         .from('shared_contact_access')
@@ -159,6 +162,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
       console.error('Error loading contacts:', error);
     } finally {
       setLoading(false);
+      hasLoadedOnceRef.current = true;
     }
   };
 
@@ -276,8 +280,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     setQuickMeetingIsEmail(false);
     setQuickMeetingHasExpense(null);
     setQuickMeetingExpenseMethod('');
-    setQuickMeetingExpenseAmount('');
-    setQuickMeetingReceiptFiles([]);
+    setQuickMeetingExpenses([]);
     setQuickMeetingAdditionalContacts(new Set());
     setShowQuickMeetingAdditionalContacts(false);
   };
@@ -286,36 +289,11 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     e.preventDefault();
     if (!salesPerson?.id || !quickMeetingContactId || !quickMeetingNotes.trim() || quickMeetingHasExpense === null) return;
     if (quickMeetingHasExpense && !quickMeetingExpenseMethod) return;
+    if (quickMeetingHasExpense && !expensesValid(quickMeetingExpenses)) return;
 
     setQuickMeetingSaving(true);
     try {
-      const uploadedReceipts: { filePath: string; fileName: string }[] = [];
-
-      if (quickMeetingReceiptFiles.length > 0) {
-        for (const receiptFile of quickMeetingReceiptFiles) {
-          let fileToUpload = receiptFile;
-          const isImage = receiptFile.type.startsWith('image/');
-
-          if (isImage && isImageFile(receiptFile)) {
-            try {
-              fileToUpload = await convertToJpeg(receiptFile);
-            } catch (error) {
-              console.error('Failed to convert image to JPEG:', error);
-              throw new Error('Failed to process receipt image. Please try again.');
-            }
-          }
-
-          const fileName = `${salesPerson.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpeg`;
-          const filePath = `${fileName}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from('receipts')
-            .upload(filePath, fileToUpload);
-
-          if (uploadError) throw uploadError;
-          uploadedReceipts.push({ filePath, fileName: receiptFile.name });
-        }
-      }
+      const expenseTotal = quickMeetingHasExpense ? expensesTotal(quickMeetingExpenses) : 0;
 
       const contactsToLog = [quickMeetingContactId, ...Array.from(quickMeetingAdditionalContacts)];
       const meetingGroupId = contactsToLog.length > 1 ? crypto.randomUUID() : null;
@@ -331,8 +309,8 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         is_email: quickMeetingIsEmail,
         has_expense: quickMeetingHasExpense,
         expense_payment_method: quickMeetingHasExpense ? quickMeetingExpenseMethod : null,
-        expense_amount: quickMeetingHasExpense && quickMeetingExpenseAmount ? parseFloat(quickMeetingExpenseAmount) : null,
-        receipt_url: quickMeetingHasExpense && uploadedReceipts.length > 0 ? uploadedReceipts[0].filePath : null,
+        expense_amount: quickMeetingHasExpense && expenseTotal > 0 ? expenseTotal : null,
+        receipt_url: null,
         created_by: salesPerson.user_id,
         meeting_group_id: meetingGroupId,
         is_primary_for_expense: index === 0,
@@ -345,22 +323,69 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
 
       if (error) throw error;
 
-      if (insertedMeetings && uploadedReceipts.length > 0 && quickMeetingHasExpense) {
-        const primaryMeetingId = insertedMeetings[0].id;
-        const receiptsToInsert = uploadedReceipts.map(receipt => ({
-          meeting_id: primaryMeetingId,
-          file_path: receipt.filePath,
-          file_name: receipt.fileName,
-          created_by: salesPerson.user_id,
-        }));
+      let primaryMeetingId: string | undefined;
+      if (insertedMeetings && insertedMeetings.length > 0 && quickMeetingHasExpense) {
+        primaryMeetingId = insertedMeetings[0].id;
+        const expensesToInsert: Record<string, unknown>[] = [];
 
-        await supabase.from('meeting_receipts').insert(receiptsToInsert);
+        for (const exp of quickMeetingExpenses) {
+          const amt = parseFloat(exp.amount);
+          if (!exp.description.trim() || !(amt > 0)) continue;
+
+          const row: Record<string, unknown> = {
+            meeting_id: primaryMeetingId,
+            description: exp.description.trim(),
+            amount: amt,
+            created_by: salesPerson.user_id,
+          };
+
+          if (exp.file) {
+            const renamed = buildReceiptFilename(
+              {
+                date: quickMeetingDate,
+                username: salesPerson.name,
+                contactName: contacts.find(c => c.id === quickMeetingContactId)?.name,
+                description: exp.description,
+              },
+              exp.file.name,
+            );
+            const path = `${primaryMeetingId}/${crypto.randomUUID()}/${renamed}`;
+            const { error: uploadErr } = await supabase.storage
+              .from('receipts')
+              .upload(path, exp.file, { contentType: exp.file.type, upsert: false });
+
+            if (uploadErr) {
+              console.error('Error uploading expense receipt:', uploadErr);
+            } else {
+              row.receipt_path = path;
+              row.receipt_name = renamed;
+              row.receipt_original_name = exp.file.name;
+              row.receipt_size = exp.file.size;
+              row.receipt_type = exp.file.type;
+              row.receipt_uploaded_at = new Date().toISOString();
+            }
+          }
+
+          expensesToInsert.push(row);
+        }
+
+        if (expensesToInsert.length > 0) {
+          const { error: expensesError } = await supabase
+            .from('meeting_expenses')
+            .insert(expensesToInsert);
+
+          if (expensesError) {
+            console.error('Error saving expense records:', expensesError);
+          }
+        }
       }
 
-      if (quickMeetingHasExpense && quickMeetingExpenseAmount && parseFloat(quickMeetingExpenseAmount) > 0) {
-        const result = await deductBudget(salesPerson.id, parseFloat(quickMeetingExpenseAmount));
+      if (quickMeetingHasExpense && expenseTotal > 0) {
+        const primaryContact = contacts.find(c => c.id === quickMeetingContactId);
+        const budgetType = getBudgetTypeForContact(primaryContact?.name);
+        const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, primaryMeetingId);
         if (result.exceeded && result.newBalance !== null) {
-          setBudgetWarning(`Your budget has been exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
+          setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
       }
@@ -1289,7 +1314,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Expense?</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Would you like to record an expense for this meeting?</label>
                 <div className="flex gap-4">
                   <label className={`flex-1 p-3 border-2 rounded-lg cursor-pointer text-center transition-all ${
                     quickMeetingHasExpense === true ? 'border-amber-500 bg-amber-50' : 'border-slate-200 hover:border-slate-300'
@@ -1339,61 +1364,13 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={quickMeetingExpenseAmount}
-                        onChange={(e) => setQuickMeetingExpenseAmount(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                        placeholder="0.00"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Receipt(s)</label>
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
-                        <Upload className="w-4 h-4 text-slate-600" />
-                        <span className="text-sm text-slate-700">Upload</span>
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          multiple
-                          onChange={(e) => {
-                            if (e.target.files) {
-                              setQuickMeetingReceiptFiles(prev => [...prev, ...Array.from(e.target.files!)]);
-                            }
-                          }}
-                          className="sr-only"
-                        />
-                      </label>
-                      {quickMeetingReceiptFiles.length > 0 && (
-                        <span className="text-sm text-slate-600">
-                          {quickMeetingReceiptFiles.length} file(s) selected
-                        </span>
-                      )}
-                    </div>
-                    {quickMeetingReceiptFiles.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {quickMeetingReceiptFiles.map((file, index) => (
-                          <div key={index} className="flex items-center justify-between text-sm bg-white px-3 py-1.5 rounded border border-slate-200">
-                            <span className="truncate">{file.name}</span>
-                            <button
-                              type="button"
-                              onClick={() => setQuickMeetingReceiptFiles(prev => prev.filter((_, i) => i !== index))}
-                              className="text-red-500 hover:text-red-700 ml-2"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <ExpenseListEditor
+                      expenses={quickMeetingExpenses}
+                      onChange={setQuickMeetingExpenses}
+                      date={quickMeetingDate}
+                      contactName={contacts.find(c => c.id === quickMeetingContactId)?.name ?? ''}
+                      username={salesPerson?.name ?? ''}
+                    />
                   </div>
                 </div>
               )}
@@ -1409,7 +1386,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
                 </button>
                 <button
                   type="submit"
-                  disabled={quickMeetingSaving || !quickMeetingNotes.trim() || quickMeetingHasExpense === null || (quickMeetingHasExpense && !quickMeetingExpenseMethod)}
+                  disabled={quickMeetingSaving || !quickMeetingNotes.trim() || quickMeetingHasExpense === null || (quickMeetingHasExpense && (!quickMeetingExpenseMethod || !expensesValid(quickMeetingExpenses)))}
                   className="flex-1 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
                 >
                   {quickMeetingSaving ? (

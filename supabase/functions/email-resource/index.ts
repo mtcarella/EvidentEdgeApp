@@ -1,11 +1,5 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "npm:@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
-};
+import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
+import { corsHeaders, escapeHtml, jsonResponse, requireCaller } from '../_shared/auth.ts';
 
 interface AttachmentData {
   filename: string;
@@ -31,28 +25,26 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: corsHeaders,
-    });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const auth = await requireCaller(req, { requireRoles: [] });
+  if (!auth.ok) return auth.response;
+  const { supabase } = auth;
 
-    const { resourceId, recipientEmails, subject, message, senderEmail, additionalAttachments }: EmailResourceRequest = await req.json();
+  try {
+    const {
+      resourceId,
+      recipientEmails,
+      subject,
+      message,
+      senderEmail,
+      additionalAttachments,
+    }: EmailResourceRequest = await req.json();
 
     if (!resourceId || !recipientEmails || recipientEmails.length === 0 || !subject || !message) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Missing required fields' }, 400);
     }
 
     const { data: resource, error: resourceError } = await supabase
@@ -62,13 +54,7 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (resourceError || !resource) {
-      return new Response(
-        JSON.stringify({ error: 'Resource not found' }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Resource not found' }, 404);
     }
 
     const { data: fileData, error: downloadError } = await supabase.storage
@@ -76,35 +62,24 @@ Deno.serve(async (req: Request) => {
       .download(resource.file_path);
 
     if (downloadError || !fileData) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to download resource file' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Failed to download resource file' }, 500);
     }
 
     const fileArrayBuffer = await fileData.arrayBuffer();
     const fileBase64 = arrayBufferToBase64(fileArrayBuffer);
 
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
-
     if (!resendApiKey) {
-      return new Response(
-        JSON.stringify({
-          error: 'Email service not configured. Please contact your administrator to set up the RESEND_API_KEY.'
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Email service not configured.' }, 500);
     }
 
+    const safeSenderEmail = senderEmail ? escapeHtml(senderEmail) : '';
     const footerText = senderEmail
-      ? `To reply, please respond directly to ${senderEmail}.`
+      ? `To reply, please respond directly to ${safeSenderEmail}.`
       : 'This is an automated message from the Evident Edge system.';
+
+    const safeMessage = escapeHtml(message);
+    const safeTitle = escapeHtml(resource.title);
 
     const results = [];
     const errors = [];
@@ -114,7 +89,7 @@ Deno.serve(async (req: Request) => {
         const response = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${resendApiKey}`,
+            Authorization: `Bearer ${resendApiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
@@ -125,10 +100,10 @@ Deno.serve(async (req: Request) => {
               <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                 <h2 style="color: #1e40af;">Document from Evident Title</h2>
                 <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                  ${message.split('\n').map(line => `<p style="margin: 8px 0;">${line}</p>`).join('')}
+                  ${safeMessage.split('\n').map((line) => `<p style="margin: 8px 0;">${line}</p>`).join('')}
                 </div>
                 <p style="margin: 20px 0; padding: 15px; background: #e0f2fe; border-radius: 8px;">
-                  <strong>Attached Document:</strong> ${resource.title}.pdf
+                  <strong>Attached Document:</strong> ${safeTitle}.pdf
                 </p>
                 <p style="color: #64748b; font-size: 12px; margin-top: 30px;">
                   ${footerText}
@@ -151,32 +126,20 @@ Deno.serve(async (req: Request) => {
           const errorData = await response.json();
           errors.push({ email, error: errorData.message || 'Failed to send' });
         }
-      } catch (error) {
+      } catch (error: any) {
         errors.push({ email, error: error.message });
       }
     }
 
-    return new Response(
-      JSON.stringify({
-        success: errors.length === 0,
-        sent: results.length,
-        failed: errors.length,
-        results,
-        errors,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
-  } catch (error) {
-    console.error('Error in email-resource:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return jsonResponse({
+      success: errors.length === 0,
+      sent: results.length,
+      failed: errors.length,
+      results,
+      errors,
+    });
+  } catch (error: any) {
+    console.error('Error in email-resource:', error?.message ?? error);
+    return jsonResponse({ error: 'Internal error' }, 500);
   }
 });

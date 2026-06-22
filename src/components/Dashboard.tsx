@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket, FileSearch } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket, FileSearch, Fuel, Eye } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -36,10 +36,12 @@ import { MyProspectRequests } from './MyProspectRequests';
 import { BudgetManagement } from './BudgetManagement';
 import { ContactBudgetRequests } from './ContactBudgetRequests';
 import { MyBudgetRequests } from './MyBudgetRequests';
+import { NotificationBell } from './NotificationBell';
 import { FileViewer } from './FileViewer';
 import { FileViewerModule } from './FileViewer/FileViewerModule';
+import { BudgetTransactionLog } from './BudgetTransactionLog';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user, refreshSalesPerson, chatEnabled } = useAuth();
@@ -393,7 +395,7 @@ export function Dashboard() {
     { id: 'admin' as Tab, label: 'Admin Panel', icon: Database, module: 'admin_panel', color: 'text-rose-600' },
     { id: 'audit' as Tab, label: 'Audit Log', icon: History, module: 'audit_log', color: 'text-slate-500' },
     { id: 'announcements-admin' as Tab, label: 'Manage Announcements', icon: Megaphone, module: 'manage_announcements', color: 'text-teal-600' },
-    { id: 'employee-communication' as Tab, label: 'Manage Office Communications', icon: Mail, module: 'employee_communication', color: 'text-purple-600' },
+    { id: 'employee-communication' as Tab, label: 'Manage Office Communications', icon: Mail, module: 'employee_communication', color: 'text-purple-600', superAdminOnly: true },
     { id: 'sms-management' as Tab, label: 'SMS Opt-In Management', icon: MessageSquare, module: 'sms_management', color: 'text-blue-600' },
     { id: 'rewards' as Tab, label: 'Rewards Report', icon: Award, module: 'closer_rewards_report', color: 'text-yellow-600' },
     { id: 'weekly-reports' as Tab, label: 'View Performance Reports', icon: ClipboardList, module: 'weekly_reports', color: 'text-blue-700' },
@@ -416,7 +418,10 @@ export function Dashboard() {
     }
     return hasAccess(tab.module);
   });
-  const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => hasAccess(tab.module));
+  const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => {
+    if ((tab as any).superAdminOnly && salesPerson?.role !== 'super_admin') return false;
+    return hasAccess(tab.module);
+  });
 
   const [activeTab, setActiveTab] = useState<Tab>('search');
 
@@ -465,7 +470,8 @@ export function Dashboard() {
         // Check if current tab has access (including standalone tabs like announcements and view-communications)
         const currentTabHasAccess = allTabs.some(tab => tab.id === activeTab) ||
           (activeTab === 'announcements' && hasAccess('announcements')) ||
-          (activeTab === 'view-communications' && hasAccess('view_communications'));
+          (activeTab === 'view-communications' && hasAccess('view_communications')) ||
+          (activeTab === 'budget-log' && salesPerson?.budget_display_enabled);
         if (!currentTabHasAccess) {
           setActiveTab(allTabs[0].id);
         }
@@ -543,16 +549,30 @@ export function Dashboard() {
                     {getCurrentDate()}
                   </p>
                   {salesPerson?.budget_display_enabled && (
-                    <p className={`text-slate-600 font-medium flex items-center gap-1 ${isMobile ? 'text-xs' : 'text-sm'}`}>
-                      <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
-                      Budget: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(salesPerson.budget ?? 0)}
-                    </p>
+                    <div className={`flex flex-wrap items-center gap-x-3 gap-y-0.5 ${isMobile ? 'text-xs' : 'text-sm'}`}>
+                      <span className="text-slate-600 font-medium flex items-center gap-1">
+                        <DollarSign className="w-3.5 h-3.5 text-emerald-600" />
+                        Regular Budget: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(salesPerson.budget ?? 0)}
+                      </span>
+                      <span className="text-slate-600 font-medium flex items-center gap-1">
+                        <Fuel className="w-3.5 h-3.5 text-amber-600" />
+                        Gas Budget: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(salesPerson.gas_budget ?? 0)}
+                      </span>
+                      <button
+                        onClick={() => setActiveTab('budget-log')}
+                        className="p-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition-colors"
+                        title="View Budget Transaction Log"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
             </div>
             <div className={`flex flex-shrink-0 ${isMobile ? 'flex-row gap-2 w-full justify-start' : 'flex-col gap-2 items-start ml-2'}`}>
               <div className="flex items-center gap-2">
+                <NotificationBell />
                 <div className="relative">
                   <Announcements onNavigateToAnnouncements={() => setActiveTab('announcements')} />
                 </div>
@@ -849,7 +869,7 @@ export function Dashboard() {
         {activeTab === 'announcements' && hasAccess('announcements') && <AnnouncementsArchive />}
         {activeTab === 'announcements-admin' && hasAccess('manage_announcements') && <AnnouncementsAdmin />}
         {activeTab === 'view-communications' && hasAccess('view_communications') && <ViewCommunications />}
-        {activeTab === 'employee-communication' && hasAccess('employee_communication') && <EmployeeCommunication />}
+        {activeTab === 'employee-communication' && salesPerson?.role === 'super_admin' && hasAccess('employee_communication') && <EmployeeCommunication />}
         {activeTab === 'sms-management' && hasAccess('sms_management') && <SMSOptInManagement />}
         {activeTab === 'upload-resource' && hasAccess('upload_resource') && <UploadResource />}
         {activeTab === 'direct-messages' && chatEnabled && hasAccess('direct_messages') && <DirectMessages />}
@@ -862,6 +882,7 @@ export function Dashboard() {
         {activeTab === 'budget-requests' && hasAccess('budget_requests') && <ContactBudgetRequests />}
         {activeTab === 'my-budget-requests' && salesPerson?.friends_family_enabled && hasAccess('my_budget_requests') && <MyBudgetRequests />}
         {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewerModule />}
+        {activeTab === 'budget-log' && salesPerson?.budget_display_enabled && <BudgetTransactionLog onBack={() => setActiveTab('search')} />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

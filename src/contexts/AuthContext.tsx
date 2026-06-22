@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { User, AuthError } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
@@ -11,6 +11,7 @@ interface SalesPerson {
   force_password_reset: boolean;
   chat_enabled: boolean;
   budget: number;
+  gas_budget: number;
   budget_display_enabled: boolean;
   budget_edit_enabled: boolean;
   file_viewer_enabled: boolean;
@@ -38,20 +39,41 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const INACTIVITY_TIMEOUT = 10 * 60 * 60 * 1000; // 10 hours
 
+const SALES_PERSON_FIELDS: (keyof SalesPerson)[] = [
+  'id', 'user_id', 'name', 'email', 'role',
+  'force_password_reset', 'chat_enabled',
+  'budget', 'gas_budget',
+  'budget_display_enabled', 'budget_edit_enabled', 'file_viewer_enabled',
+];
+
+function salesPersonShallowEqual(a: SalesPerson, b: SalesPerson): boolean {
+  for (const k of SALES_PERSON_FIELDS) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [salesPerson, setSalesPerson] = useState<SalesPerson | null>(null);
   const [loading, setLoading] = useState(true);
-  const [lastActivity, setLastActivity] = useState(Date.now());
+  const lastActivityRef = useRef(Date.now());
+  const fetchedUserIdRef = useRef<string | null>(null);
 
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role, force_password_reset, chat_enabled, budget, budget_display_enabled, budget_edit_enabled, friends_family_enabled, file_viewer_enabled')
+      .select('id, user_id, name, email, role, force_password_reset, chat_enabled, budget, gas_budget, budget_display_enabled, budget_edit_enabled, friends_family_enabled, file_viewer_enabled')
       .eq('user_id', userId)
       .maybeSingle();
 
-    setSalesPerson(data);
+    setSalesPerson((prev) => {
+      if (!data) return null;
+      if (prev && salesPersonShallowEqual(prev, data as SalesPerson)) {
+        return prev;
+      }
+      return data as SalesPerson;
+    });
   };
 
   const clearForcePasswordReset = async () => {
@@ -66,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const updateLastActivity = () => {
-    setLastActivity(Date.now());
+    lastActivityRef.current = Date.now();
   };
 
   useEffect(() => {
@@ -86,7 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return;
 
     const checkInactivity = setInterval(() => {
-      const timeSinceLastActivity = Date.now() - lastActivity;
+      const timeSinceLastActivity = Date.now() - lastActivityRef.current;
       if (timeSinceLastActivity >= INACTIVITY_TIMEOUT) {
         signOut();
         alert('You have been logged out due to inactivity.');
@@ -94,23 +116,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, 60000);
 
     return () => clearInterval(checkInactivity);
-  }, [user, lastActivity]);
+  }, [user]);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
+        fetchedUserIdRef.current = session.user.id;
         await fetchSalesPerson(session.user.id);
       }
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      const nextUser = session?.user ?? null;
+      const nextUserId = nextUser?.id ?? null;
+
+      // Skip work when this is just a token refresh / repeat session for the
+      // same user — replacing user/salesPerson with new references on every
+      // refresh causes downstream effects to re-run, which can unmount open
+      // modals and destroy in-progress form state.
+      if (event === 'TOKEN_REFRESHED' && nextUserId && nextUserId === fetchedUserIdRef.current) {
+        return;
+      }
+      if (event === 'INITIAL_SESSION' && nextUserId && nextUserId === fetchedUserIdRef.current) {
+        return;
+      }
+      if (event === 'SIGNED_IN' && nextUserId && nextUserId === fetchedUserIdRef.current) {
+        return;
+      }
+      if (event === 'USER_UPDATED' && nextUserId && nextUserId === fetchedUserIdRef.current) {
+        // Refresh profile fields but do not flip user identity reference.
+        (async () => {
+          await fetchSalesPerson(nextUserId);
+        })();
+        return;
+      }
+
       (async () => {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchSalesPerson(session.user.id);
+        setUser(nextUser);
+        if (nextUser) {
+          fetchedUserIdRef.current = nextUser.id;
+          await fetchSalesPerson(nextUser.id);
         } else {
+          fetchedUserIdRef.current = null;
           setSalesPerson(null);
         }
       })();
@@ -120,33 +169,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    try {
-      const masterPasswordResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/master-password-auth`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ email, password }),
-        }
-      );
-
-      if (masterPasswordResponse.ok) {
-        const masterPasswordData = await masterPasswordResponse.json();
-
-        if (masterPasswordData.isMasterPassword && masterPasswordData.session) {
-          const { error: setSessionError } = await supabase.auth.setSession({
-            access_token: masterPasswordData.session.access_token,
-            refresh_token: masterPasswordData.session.refresh_token,
-          });
-          return { error: setSessionError };
-        }
-      }
-    } catch (masterPasswordError) {
-      console.error('Master password check failed, proceeding with normal auth:', masterPasswordError);
-    }
-
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
