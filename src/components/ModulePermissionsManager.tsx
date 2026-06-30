@@ -46,6 +46,7 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'manage_announcements', label: 'Manage Announcements', description: 'Create and manage announcements' },
   { name: 'employee_communication', label: 'Office Communication', description: 'Send emails and texts to employees' },
   { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
+  { name: 'budget_requests', label: 'Manage Friends & Family Requests', description: 'Review and manage Friends and Family requests from sales team', special: true },
   { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page for this user', special: true },
   { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit budget amount for this user', special: true },
   { name: 'edit_admin_fields', label: 'Edit Admin Fields', description: 'Edit assignment, paralegal, preferred vendors, and processor notes', special: true },

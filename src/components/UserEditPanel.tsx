@@ -48,6 +48,7 @@ const AVAILABLE_MODULES = [
   { name: 'resources', label: 'Resources', description: 'View company resources' },
   { name: 'conflict_check', label: 'Conflict Check', description: 'Check for conflicts' },
   { name: 'yankees_tickets', label: 'Yankees Tickets', description: 'View and request Yankees game tickets' },
+  { name: 'budget_requests', label: 'Manage Friends & Family Requests', description: 'Review and manage Friends and Family requests from sales team' },
   { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page' },
   { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit user budget' },
 ];

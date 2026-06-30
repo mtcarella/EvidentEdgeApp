@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel, Pencil, Trash2, ArrowLeft, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useDialog } from '../contexts/DialogContext';
 
 interface BudgetTransaction {
   id: string;
@@ -44,10 +45,14 @@ type SortDir = 'asc' | 'desc';
 
 interface Props {
   onBack?: () => void;
+  targetUserId?: string;
+  targetUserName?: string;
+  adminMode?: boolean;
 }
 
-export function BudgetTransactionLog({ onBack }: Props) {
+export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adminMode }: Props) {
   const { salesPerson } = useAuth();
+  const dialog = useDialog();
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortField, setSortField] = useState<SortField>('created_at');
@@ -66,18 +71,24 @@ export function BudgetTransactionLog({ onBack }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFilename, setPreviewFilename] = useState('');
 
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ description: '', amount: '' });
+
+  const effectiveUserId = targetUserId || salesPerson?.id;
+
   useEffect(() => {
-    if (salesPerson?.id) fetchTransactions();
-  }, [salesPerson?.id]);
+    if (effectiveUserId) fetchTransactions();
+  }, [effectiveUserId]);
 
   const fetchTransactions = async () => {
-    if (!salesPerson?.id) return;
+    if (!effectiveUserId) return;
     setLoading(true);
 
     const { data, error } = await supabase
       .from('budget_transactions')
       .select('id, amount, type, category, description, budget_type, balance_after, created_at, meeting_id')
-      .eq('sales_person_id', salesPerson.id)
+      .eq('sales_person_id', effectiveUserId)
       .order('created_at', { ascending: false });
 
     if (!error && data) {
@@ -135,6 +146,46 @@ export function BudgetTransactionLog({ onBack }: Props) {
   const closePreview = () => {
     setPreviewUrl(null);
     setPreviewFilename('');
+  };
+
+  const startEditing = (t: BudgetTransaction) => {
+    setEditingId(t.id);
+    setEditForm({ description: t.description, amount: String(t.amount) });
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditForm({ description: '', amount: '' });
+  };
+
+  const saveEdit = async (t: BudgetTransaction) => {
+    const newAmount = parseFloat(editForm.amount);
+    if (isNaN(newAmount) || newAmount <= 0) return;
+
+    const { error } = await supabase
+      .from('budget_transactions')
+      .update({ description: editForm.description.trim(), amount: newAmount })
+      .eq('id', t.id);
+
+    if (!error) {
+      setTransactions(prev => prev.map(tx =>
+        tx.id === t.id ? { ...tx, description: editForm.description.trim(), amount: newAmount } : tx
+      ));
+      cancelEditing();
+    }
+  };
+
+  const deleteTransaction = async (t: BudgetTransaction) => {
+    if (!(await dialog.confirm(`Delete this ${t.type} of ${formatCurrency(t.amount)}? This cannot be undone.`))) return;
+
+    const { error } = await supabase
+      .from('budget_transactions')
+      .delete()
+      .eq('id', t.id);
+
+    if (!error) {
+      setTransactions(prev => prev.filter(tx => tx.id !== t.id));
+    }
   };
 
   const availableMonths = useMemo(() => {
@@ -280,12 +331,14 @@ export function BudgetTransactionLog({ onBack }: Props) {
               onClick={onBack}
               className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
             >
-              <X className="w-5 h-5" />
+              <ArrowLeft className="w-5 h-5" />
             </button>
           )}
           <div className="flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-600" />
-            <h2 className="text-lg font-semibold text-slate-900">Budget Transaction Log</h2>
+            <h2 className="text-lg font-semibold text-slate-900">
+              {targetUserName ? `${targetUserName} — Budget Transactions` : 'Budget Transaction Log'}
+            </h2>
           </div>
         </div>
         <span className="text-sm text-slate-500">
@@ -471,12 +524,17 @@ export function BudgetTransactionLog({ onBack }: Props) {
                 <th className="text-center py-3 px-3 w-12">
                   <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Details</span>
                 </th>
+                {adminMode && (
+                  <th className="text-center py-3 px-3 w-20">
+                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12">
+                  <td colSpan={adminMode ? 7 : 6} className="text-center py-12">
                     <DollarSign className="w-10 h-10 mx-auto mb-3 text-slate-300" />
                     <p className="text-slate-500 font-medium">No transactions found</p>
                     <p className="text-sm text-slate-400 mt-1">
@@ -488,17 +546,39 @@ export function BudgetTransactionLog({ onBack }: Props) {
                 filteredTransactions.map(t => (
                   <tr
                     key={t.id}
-                    className={`border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors ${t.meeting_id ? 'cursor-pointer' : ''}`}
-                    onClick={() => t.meeting_id && handleTransactionClick(t)}
+                    className={`border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50 transition-colors ${t.meeting_id && editingId !== t.id ? 'cursor-pointer' : ''}`}
+                    onClick={() => t.meeting_id && editingId !== t.id && handleTransactionClick(t)}
                   >
                     <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
                       {formatDate(t.created_at)}
                     </td>
-                    <td className="py-3 px-4 text-sm text-slate-800 max-w-[240px] truncate">
-                      {t.description || '\u2014'}
+                    <td className="py-3 px-4 text-sm text-slate-800 max-w-[240px]">
+                      {editingId === t.id ? (
+                        <input
+                          type="text"
+                          value={editForm.description}
+                          onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                          onClick={e => e.stopPropagation()}
+                          className="w-full px-2 py-1 text-sm border border-slate-200 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 outline-none"
+                        />
+                      ) : (
+                        <span className="truncate block">{t.description || '\u2014'}</span>
+                      )}
                     </td>
                     <td className={`py-3 px-4 text-sm font-semibold whitespace-nowrap ${t.type === 'credit' ? 'text-emerald-700' : 'text-red-700'}`}>
-                      {t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}
+                      {editingId === t.id ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editForm.amount}
+                          onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))}
+                          onClick={e => e.stopPropagation()}
+                          className="w-24 px-2 py-1 text-sm border border-slate-200 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 outline-none text-slate-800 font-normal"
+                        />
+                      ) : (
+                        <>{t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}</>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-semibold rounded-full ${
@@ -533,6 +613,45 @@ export function BudgetTransactionLog({ onBack }: Props) {
                         <span className="text-slate-300">&mdash;</span>
                       )}
                     </td>
+                    {adminMode && (
+                      <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
+                        {editingId === t.id ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => saveEdit(t)}
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                              title="Save"
+                            >
+                              <Save className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={cancelEditing}
+                              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                              title="Cancel"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              onClick={() => startEditing(t)}
+                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit transaction"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => deleteTransaction(t)}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete transaction"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}

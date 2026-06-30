@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X, Fuel } from 'lucide-react';
+import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X, Fuel, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BudgetType } from '../lib/budgetUtils';
+import { BudgetTransactionLog } from './BudgetTransactionLog';
 
 type BudgetField = 'budget' | 'gas_budget';
 
@@ -38,6 +39,7 @@ export function BudgetManagement() {
   const [addFundsOpen, setAddFundsOpen] = useState<Record<RowKey, boolean>>({});
   const [undoEntries, setUndoEntries] = useState<Record<RowKey, UndoEntry>>({});
   const [focusedKey, setFocusedKey] = useState<RowKey | null>(null);
+  const [viewingUser, setViewingUser] = useState<BudgetUser | null>(null);
   const debounceTimers = useRef<Record<RowKey, ReturnType<typeof setTimeout>>>({});
   const savedTimers = useRef<Record<RowKey, ReturnType<typeof setTimeout>>>({});
 
@@ -285,6 +287,17 @@ export function BudgetManagement() {
     );
   }
 
+  if (viewingUser) {
+    return (
+      <BudgetTransactionLog
+        targetUserId={viewingUser.id}
+        targetUserName={viewingUser.name}
+        adminMode
+        onBack={() => setViewingUser(null)}
+      />
+    );
+  }
+
   const renderBudgetCell = (user: BudgetUser, field: BudgetField) => {
     const key = rk(user.id, field);
     const value = parseFloat(String(user[field])) || 0;
@@ -438,6 +451,7 @@ export function BudgetManagement() {
               </th>
               <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add</th>
               <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Updated</th>
+              <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-12">Log</th>
             </tr>
           </thead>
           <tbody>
@@ -462,6 +476,15 @@ export function BudgetManagement() {
                 </td>
                 <td className="py-3 px-5 text-sm text-slate-500">
                   {formatDate(user.updated_at)}
+                </td>
+                <td className="py-3 px-3 text-center">
+                  <button
+                    onClick={() => setViewingUser(user)}
+                    className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                    title={`View ${user.name}'s transaction log`}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
                 </td>
               </tr>
             ))}
