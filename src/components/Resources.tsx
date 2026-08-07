@@ -385,7 +385,7 @@ export function Resources() {
 
     const isDayAtTheRaces = resource.title.toLowerCase().includes('day at the races');
     if (isDayAtTheRaces) {
-      setEmailSubject('Evident Title Day at the Races 2026');
+      setEmailSubject('You are invited! Evident Title\'s Day at the Races!');
       setEmailMessage('Evident Title Agency is pleased to invite you and a guest to our Day at the Races Client Appreciation Event at the Meadowlands Racetrack!\n\nThank you for being a valued and loyal client. We appreciate your partnership and look forward to celebrating with you. Hope to see you there!');
       setEmailLinkUrl('https://www.evidenttitle.com/ev/');
     } else {
