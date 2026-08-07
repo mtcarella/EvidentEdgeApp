@@ -98,11 +98,29 @@ Deno.serve(async (req: Request) => {
 
     const safeLinkUrl = linkUrl ? escapeHtml(linkUrl) : '';
 
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const results = [];
     const errors = [];
 
     for (const email of recipientEmails) {
       try {
+        const recipientName = recipientNames?.[email.toLowerCase()] || null;
+        const { data: trackingRow } = await supabase
+          .from('resource_email_sends')
+          .insert({
+            resource_id: resourceId,
+            recipient_email: email,
+            recipient_name: recipientName,
+            sender_id: auth.salesPerson?.id || null,
+            subject,
+          })
+          .select('id')
+          .single();
+
+        const trackingPixelHtml = trackingRow
+          ? `<img src="${supabaseUrl}/functions/v1/track-email-open?id=${trackingRow.id}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;" />`
+          : '';
+
         const attachments: Array<Record<string, string>> = [];
 
         if (isImage) {
@@ -178,6 +196,7 @@ Deno.serve(async (req: Request) => {
     <p style="color:#64748b;font-size:12px;margin:0;">${footerText}</p>
   </td></tr>
 </table>
+${trackingPixelHtml}
 </body></html>`,
             attachments,
           }),

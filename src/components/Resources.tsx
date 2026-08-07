@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType, Image } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType, Image, BarChart3, Clock, MailOpen, MailX } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -91,6 +91,10 @@ export function Resources() {
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [userGroups, setUserGroups] = useState<UserGroup[]>([]);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const [trackingResource, setTrackingResource] = useState<Resource | null>(null);
+  const [trackingData, setTrackingData] = useState<Array<{ id: string; recipient_email: string; recipient_name: string | null; subject: string; sent_at: string; opened_at: string | null; open_count: number; sender?: { name: string } | null }>>([]);
+  const [trackingLoading, setTrackingLoading] = useState(false);
 
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [editingCategory, setEditingCategory] = useState<ResourceCategory | null>(null);
@@ -377,6 +381,41 @@ export function Resources() {
     }
   };
 
+  const handleViewTracking = async (resource: Resource) => {
+    setTrackingResource(resource);
+    setTrackingLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('resource_email_sends')
+        .select('id, recipient_email, recipient_name, subject, sent_at, opened_at, open_count, sender_id')
+        .eq('resource_id', resource.id)
+        .order('sent_at', { ascending: false });
+
+      if (error) throw error;
+
+      const senderIds = [...new Set((data || []).map(d => d.sender_id).filter(Boolean))];
+      let senderMap: Record<string, string> = {};
+      if (senderIds.length > 0) {
+        const { data: senders } = await supabase
+          .from('sales_people')
+          .select('id, name')
+          .in('id', senderIds);
+        if (senders) {
+          senderMap = Object.fromEntries(senders.map(s => [s.id, s.name]));
+        }
+      }
+
+      setTrackingData((data || []).map(d => ({
+        ...d,
+        sender: d.sender_id ? { name: senderMap[d.sender_id] || 'Unknown' } : null,
+      })));
+    } catch {
+      setNotification({ type: 'error', message: 'Failed to load email tracking data' });
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
   const handleEmailClick = (resource: Resource) => {
     setEmailResource(resource);
     setEmailRecipients([]);
@@ -558,14 +597,20 @@ export function Resources() {
   const filteredEmailUsers = users.filter(u =>
     u.name.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
     u.email.toLowerCase().includes(userSearchTerm.toLowerCase())
-  );
+  ).sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
-  const filteredContacts = myContacts.filter(c =>
-    c.first_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
-    c.last_name.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
-    c.company.toLowerCase().includes(contactSearchTerm.toLowerCase()) ||
-    c.email.toLowerCase().includes(contactSearchTerm.toLowerCase())
-  );
+  const filteredContacts = myContacts.filter(c => {
+    const term = contactSearchTerm.toLowerCase();
+    return (c.first_name || '').toLowerCase().includes(term) ||
+      (c.last_name || '').toLowerCase().includes(term) ||
+      (c.company || '').toLowerCase().includes(term) ||
+      (c.email || '').toLowerCase().includes(term);
+  }).sort((a, b) => {
+    const firstA = (a.first_name || '').toLowerCase();
+    const firstB = (b.first_name || '').toLowerCase();
+    if (firstA !== firstB) return firstA.localeCompare(firstB);
+    return (a.last_name || '').toLowerCase().localeCompare((b.last_name || '').toLowerCase());
+  });
 
   const toggleCategory = (category: string) => {
     const newExpanded = new Set(expandedCategories);
@@ -945,6 +990,13 @@ export function Resources() {
                                   >
                                     <Mail className="h-4 w-4" />
                                   </button>
+                                  <button
+                                    onClick={() => handleViewTracking(resource)}
+                                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                    title="View Email Opens"
+                                  >
+                                    <BarChart3 className="h-4 w-4" />
+                                  </button>
                                 </>
                               ) : (
                                 <>
@@ -968,6 +1020,13 @@ export function Resources() {
                                     title="Email Document"
                                   >
                                     <Mail className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleViewTracking(resource)}
+                                    className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                    title="View Email Opens"
+                                  >
+                                    <BarChart3 className="h-4 w-4" />
                                   </button>
                                 </>
                               )}
@@ -1706,6 +1765,116 @@ export function Resources() {
                 className="w-full px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trackingResource && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-100 rounded-lg">
+                  <BarChart3 className="h-5 w-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Email Tracking</h3>
+                  <p className="text-sm text-gray-500">{trackingResource.title}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setTrackingResource(null); setTrackingData([]); }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto flex-1">
+              {trackingLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader className="h-8 w-8 animate-spin text-indigo-600" />
+                </div>
+              ) : trackingData.length === 0 ? (
+                <div className="text-center py-12">
+                  <Mail className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 font-medium">No emails sent yet</p>
+                  <p className="text-sm text-gray-400 mt-1">Send this resource via email to start tracking opens.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-4 mb-6">
+                    <div className="bg-blue-50 rounded-xl p-4 text-center">
+                      <p className="text-2xl font-bold text-blue-700">{trackingData.length}</p>
+                      <p className="text-xs text-blue-600 mt-1 font-medium">Total Sent</p>
+                    </div>
+                    <div className="bg-emerald-50 rounded-xl p-4 text-center">
+                      <p className="text-2xl font-bold text-emerald-700">{trackingData.filter(d => d.opened_at).length}</p>
+                      <p className="text-xs text-emerald-600 mt-1 font-medium">Opened</p>
+                    </div>
+                    <div className="bg-amber-50 rounded-xl p-4 text-center">
+                      <p className="text-2xl font-bold text-amber-700">{trackingData.filter(d => !d.opened_at).length}</p>
+                      <p className="text-xs text-amber-600 mt-1 font-medium">Unopened</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {trackingData.map((send) => (
+                      <div key={send.id} className={`flex items-center justify-between p-3 rounded-lg border ${send.opened_at ? 'border-emerald-200 bg-emerald-50/50' : 'border-gray-200 bg-gray-50'}`}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`p-1.5 rounded-full ${send.opened_at ? 'bg-emerald-100' : 'bg-gray-200'}`}>
+                            {send.opened_at ? <MailOpen className="h-4 w-4 text-emerald-600" /> : <MailX className="h-4 w-4 text-gray-400" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">
+                              {send.recipient_name || send.recipient_email}
+                            </p>
+                            {send.recipient_name && (
+                              <p className="text-xs text-gray-500 truncate">{send.recipient_email}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right flex-shrink-0 ml-4">
+                          {send.opened_at ? (
+                            <div>
+                              <p className="text-xs font-medium text-emerald-700">Opened</p>
+                              <p className="text-xs text-gray-500 flex items-center gap-1 justify-end">
+                                <Clock className="h-3 w-3" />
+                                {new Date(send.opened_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}{' '}
+                                {new Date(send.opened_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                              </p>
+                              {send.open_count > 1 && (
+                                <p className="text-xs text-gray-400">{send.open_count} times</p>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <p className="text-xs font-medium text-gray-400">Not opened</p>
+                              <p className="text-xs text-gray-400 flex items-center gap-1 justify-end">
+                                <Clock className="h-3 w-3" />
+                                Sent {new Date(send.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="border-t border-gray-200 p-4 flex justify-between items-center">
+              <p className="text-xs text-gray-400">
+                {trackingData.length > 0 && `Sent by: ${[...new Set(trackingData.map(d => d.sender?.name).filter(Boolean))].join(', ')}`}
+              </p>
+              <button
+                onClick={() => { setTrackingResource(null); setTrackingData([]); }}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+              >
+                Close
               </button>
             </div>
           </div>
