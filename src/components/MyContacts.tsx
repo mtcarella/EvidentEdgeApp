@@ -551,12 +551,16 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         throw new Error('You are not authorized to delete this contact.');
       }
 
-      const { error } = await supabase
+      const { data: deletedRows, error } = await supabase
         .from('contacts')
         .delete()
-        .eq('id', deletingContact.id);
+        .eq('id', deletingContact.id)
+        .select('id');
 
       if (error) throw error;
+      if (!deletedRows || deletedRows.length === 0) {
+        throw new Error('You do not have permission to delete this contact.');
+      }
 
       const deletedAt = new Date().toISOString();
       // Fire-and-forget email notification to super admin Mike Carella.

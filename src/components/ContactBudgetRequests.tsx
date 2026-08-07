@@ -19,6 +19,7 @@ interface BudgetRequest {
   status: 'pending' | 'approved' | 'rejected';
   reviewed_at: string | null;
   reviewed_by: string | null;
+  reviewed_by_name?: string | null;
 }
 
 type Tab = 'pending' | 'approved' | 'rejected';
@@ -26,7 +27,6 @@ type Tab = 'pending' | 'approved' | 'rejected';
 export function ContactBudgetRequests() {
   const { user, salesPerson, refreshSalesPerson } = useAuth();
   const dialog = useDialog();
-  const isSuperAdmin = salesPerson?.role === 'super_admin';
 
   const [activeTab, setActiveTab] = useState<Tab>('pending');
   const [requests, setRequests] = useState<BudgetRequest[]>([]);
@@ -46,7 +46,27 @@ export function ContactBudgetRequests() {
       .eq('status', activeTab)
       .order('created_at', { ascending: activeTab === 'pending' });
 
-    if (!error && data) setRequests(data as BudgetRequest[]);
+    if (!error && data) {
+      if (activeTab !== 'pending' && data.length > 0) {
+        const reviewerIds = [...new Set(data.filter(r => r.reviewed_by).map(r => r.reviewed_by))];
+        if (reviewerIds.length > 0) {
+          const { data: reviewers } = await supabase
+            .from('sales_people')
+            .select('user_id, name')
+            .in('user_id', reviewerIds);
+
+          const reviewerMap = new Map((reviewers || []).map(r => [r.user_id, r.name]));
+          setRequests(data.map(r => ({
+            ...r,
+            reviewed_by_name: r.reviewed_by ? reviewerMap.get(r.reviewed_by) || null : null,
+          })) as BudgetRequest[]);
+        } else {
+          setRequests(data as BudgetRequest[]);
+        }
+      } else {
+        setRequests(data as BudgetRequest[]);
+      }
+    }
     setLoading(false);
   };
 
@@ -250,7 +270,7 @@ export function ContactBudgetRequests() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      {activeTab === 'pending' && isSuperAdmin && (
+                      {activeTab === 'pending' && (
                         <>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleApprove(req); }}
@@ -281,6 +301,9 @@ export function ContactBudgetRequests() {
                         <div><span className="font-medium text-slate-700">Requested By:</span> <span className="text-slate-600">{req.requesting_user_name}</span></div>
                         {req.reviewed_at && (
                           <div><span className="font-medium text-slate-700">Reviewed:</span> <span className="text-slate-600">{new Date(req.reviewed_at).toLocaleString()}</span></div>
+                        )}
+                        {req.reviewed_by_name && (
+                          <div><span className="font-medium text-slate-700">Reviewed By:</span> <span className="text-slate-600">{req.reviewed_by_name}</span></div>
                         )}
                       </div>
                     </div>

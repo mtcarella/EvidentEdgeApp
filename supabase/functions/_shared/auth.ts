@@ -55,7 +55,7 @@ export async function requireCaller(
   const token = authHeader.replace('Bearer ', '').trim();
 
   if (!token) {
-    return { ok: false, response: jsonResponse({ error: 'Unauthorized' }, 401) };
+    return { ok: false, response: jsonResponse({ error: 'Unauthorized: no token provided' }, 401) };
   }
 
   if (opts.allowServiceRole && token === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) {
@@ -79,7 +79,8 @@ export async function requireCaller(
 
   const { data: userData, error: userErr } = await supabase.auth.getUser(token);
   if (userErr || !userData.user) {
-    return { ok: false, response: jsonResponse({ error: 'Unauthorized' }, 401) };
+    console.error('getUser failed:', userErr?.message ?? 'no user returned');
+    return { ok: false, response: jsonResponse({ error: `Unauthorized: ${userErr?.message ?? 'invalid token'}` }, 401) };
   }
 
   const { data: profile, error: profileErr } = await supabase

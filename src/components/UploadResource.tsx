@@ -1,16 +1,22 @@
 import { useState, useEffect } from 'react';
-import { Upload, Loader, AlertCircle, FileText, Video, Link, FileType } from 'lucide-react';
+import { Upload, Loader, AlertCircle, FileText, Video, Link, FileType, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Toast } from './Toast';
 
-type ResourceType = 'pdf' | 'video' | 'link' | 'word';
+type ResourceType = 'pdf' | 'video' | 'link' | 'word' | 'image';
 
 const ALLOWED_FILE_TYPES = {
   pdf: {
     mimeTypes: ['application/pdf'],
     extensions: ['.pdf'],
     label: 'PDF',
+    maxSize: 10 * 1024 * 1024,
+  },
+  image: {
+    mimeTypes: ['image/png', 'image/jpeg', 'image/gif', 'image/webp'],
+    extensions: ['.png', '.jpg', '.jpeg', '.gif', '.webp'],
+    label: 'Image',
     maxSize: 10 * 1024 * 1024,
   },
   video: {
@@ -259,6 +265,18 @@ export function UploadResource() {
               </button>
               <button
                 type="button"
+                onClick={() => handleFileTypeChange('image')}
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
+                  uploadForm.fileType === 'image'
+                    ? 'border-rose-500 bg-rose-50 text-rose-700'
+                    : 'border-gray-200 hover:border-gray-300 text-gray-600'
+                }`}
+              >
+                <ImageIcon className="h-5 w-5" />
+                <span className="font-medium">Image</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => handleFileTypeChange('word')}
                 className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 transition-all ${
                   uploadForm.fileType === 'word'
@@ -316,6 +334,7 @@ export function UploadResource() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {uploadForm.fileType === 'pdf' ? 'PDF File (Max 10MB)' :
+                 uploadForm.fileType === 'image' ? 'Image File (Max 10MB)' :
                  uploadForm.fileType === 'word' ? 'Word Document (Max 25MB)' :
                  'Video File (Max 100MB)'}
               </label>
@@ -323,6 +342,7 @@ export function UploadResource() {
                 type="file"
                 accept={
                   uploadForm.fileType === 'pdf' ? '.pdf' :
+                  uploadForm.fileType === 'image' ? '.png,.jpg,.jpeg,.gif,.webp' :
                   uploadForm.fileType === 'word' ? '.doc,.docx' :
                   '.mp4,.webm,.mov,.avi,.wmv'
                 }

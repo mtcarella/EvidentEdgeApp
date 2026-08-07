@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType } from 'lucide-react';
+import { FileText, Trash2, Download, Loader, ChevronDown, ChevronUp, Eye, X, CreditCard as Edit, Mail, Search, Users, Building, BookOpen, HelpCircle, Briefcase, Megaphone, FolderOpen, GraduationCap, Plus, Settings, Pencil, Check, Star, Tag, Palette, Video, Link, ExternalLink, CheckSquare, Square, FileType, Image } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -83,6 +83,7 @@ export function Resources() {
   const [emailSubject, setEmailSubject] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
   const [emailSending, setEmailSending] = useState(false);
+  const [emailLinkUrl, setEmailLinkUrl] = useState('');
   const [manualEmail, setManualEmail] = useState('');
   const [userSearchTerm, setUserSearchTerm] = useState('');
   const [users, setUsers] = useState<Array<{ id: string; user_id: string; name: string; email: string }>>([]);
@@ -99,7 +100,7 @@ export function Resources() {
   const [categoryActionLoading, setCategoryActionLoading] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [resourceSearchTerm, setResourceSearchTerm] = useState('');
-  const [emailAttachments, setEmailAttachments] = useState<File[]>([]);
+
 
   useEffect(() => {
     fetchCategories();
@@ -378,12 +379,20 @@ export function Resources() {
 
   const handleEmailClick = (resource: Resource) => {
     setEmailResource(resource);
-    setEmailSubject(`Document: ${resource.title}`);
-    setEmailMessage(`Please find the attached document "${resource.title}" from Evident Title.\n\nIf you have any questions, feel free to reach out.`);
     setEmailRecipients([]);
     setManualEmail('');
     setUserSearchTerm('');
-    setEmailAttachments([]);
+
+    const isDayAtTheRaces = resource.title.toLowerCase().includes('day at the races');
+    if (isDayAtTheRaces) {
+      setEmailSubject('Evident Title Day at the Races 2026');
+      setEmailMessage('Evident Title Agency is pleased to invite you and a guest to our Day at the Races Client Appreciation Event at the Meadowlands Racetrack!\n\nThank you for being a valued and loyal client. We appreciate your partnership and look forward to celebrating with you. Hope to see you there!');
+      setEmailLinkUrl('https://www.evidenttitle.com/ev/');
+    } else {
+      setEmailSubject(resource.title);
+      setEmailMessage(`Please find the attached document "${resource.title}" from Evident Title.\n\nIf you have any questions, feel free to reach out.`);
+      setEmailLinkUrl('');
+    }
   };
 
   const handleEmailCancel = () => {
@@ -394,33 +403,9 @@ export function Resources() {
     setManualEmail('');
     setUserSearchTerm('');
     setContactSearchTerm('');
-    setEmailAttachments([]);
+    setEmailLinkUrl('');
   };
 
-  const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      setEmailAttachments(prev => [...prev, ...newFiles]);
-    }
-    e.target.value = '';
-  };
-
-  const handleRemoveAttachment = (index: number) => {
-    setEmailAttachments(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
-  };
 
   const handleAddManualEmail = () => {
     const trimmedEmail = manualEmail.trim().toLowerCase();
@@ -489,49 +474,74 @@ export function Resources() {
     setEmailSending(true);
 
     try {
-      const additionalAttachments = await Promise.all(
-        emailAttachments.map(async (file) => ({
-          filename: file.name,
-          content: await fileToBase64(file),
-        }))
-      );
-
       const { data: senderData } = await supabase
         .from('sales_people')
         .select('email')
         .eq('id', salesPerson?.id)
         .maybeSingle();
 
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        throw new Error('Your session has expired. Please log in again.');
+      }
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Your session has expired. Please log in again.');
+      }
+
+      const recipientNames: Record<string, string> = {};
+      for (const email of emailRecipients) {
+        const lowerEmail = email.toLowerCase();
+        const matchedContact = myContacts.find(c => c.email.toLowerCase() === lowerEmail);
+        if (matchedContact) {
+          recipientNames[lowerEmail] = matchedContact.first_name;
+        } else {
+          const matchedUser = users.find(u => u.email.toLowerCase() === lowerEmail);
+          if (matchedUser) {
+            recipientNames[lowerEmail] = matchedUser.name.split(' ')[0];
+          }
+        }
+      }
+
+      const payload: Record<string, unknown> = {
+        resourceId: emailResource.id,
+        recipientEmails: emailRecipients,
+        recipientNames,
+        subject: emailSubject,
+        message: emailMessage,
+        senderEmail: senderData?.email,
+        linkUrl: emailLinkUrl.trim() || undefined,
+      };
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/email-resource`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session?.access_token}`,
+            'Authorization': `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
           },
-          body: JSON.stringify({
-            resourceId: emailResource.id,
-            recipientEmails: emailRecipients,
-            subject: emailSubject,
-            message: emailMessage,
-            senderEmail: senderData?.email,
-            additionalAttachments: additionalAttachments.length > 0 ? additionalAttachments : undefined
-          })
+          body: JSON.stringify(payload),
         }
       );
 
-      const result = await response.json();
+      const resultText = await response.text();
+      let result: Record<string, unknown>;
+      try {
+        result = JSON.parse(resultText);
+      } catch {
+        throw new Error(`Server error: ${resultText.substring(0, 200)}`);
+      }
 
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to send email');
+        throw new Error(result.error as string || `Failed to send email (${response.status})`);
       }
 
       if (result.sent > 0) {
         setNotification({
           type: 'success',
-          message: `Document sent successfully to ${result.sent} recipient${result.sent > 1 ? 's' : ''}!`
+          message: `Document emailed successfully to ${result.sent} recipient${result.sent > 1 ? 's' : ''}!`
         });
         handleEmailCancel();
       } else {
@@ -573,7 +583,7 @@ export function Resources() {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'word' | 'other' => {
+  const getFileType = (filePath: string): 'pdf' | 'video' | 'link' | 'word' | 'image' | 'other' => {
     if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
       return 'link';
     }
@@ -581,6 +591,7 @@ export function Resources() {
     if (ext === 'pdf') return 'pdf';
     if (['mp4', 'webm', 'mov', 'avi', 'wmv'].includes(ext || '')) return 'video';
     if (['doc', 'docx'].includes(ext || '')) return 'word';
+    if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext || '')) return 'image';
     return 'other';
   };
 
@@ -834,6 +845,7 @@ export function Resources() {
                           const isVideo = fileType === 'video';
                           const isLink = fileType === 'link';
                           const isWord = fileType === 'word';
+                          const isImage = fileType === 'image';
                           return (
                           <div
                             key={resource.id}
@@ -841,7 +853,7 @@ export function Resources() {
                           >
                             <div className="flex items-center gap-3 flex-1 min-w-0">
                               <div className={`p-2 rounded-lg group-hover:bg-white group-hover:shadow-sm transition-all duration-150 ${
-                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : isWord ? 'bg-sky-100' : 'bg-gray-100'
+                                isLink ? 'bg-emerald-100' : isVideo ? 'bg-blue-100' : isWord ? 'bg-sky-100' : isImage ? 'bg-purple-100' : 'bg-gray-100'
                               }`}>
                                 {isLink ? (
                                   <Link className="h-4 w-4 text-emerald-600" />
@@ -849,6 +861,8 @@ export function Resources() {
                                   <Video className="h-4 w-4 text-blue-600" />
                                 ) : isWord ? (
                                   <FileType className="h-4 w-4 text-sky-600" />
+                                ) : isImage ? (
+                                  <Image className="h-4 w-4 text-purple-600" />
                                 ) : (
                                   <FileText className="h-4 w-4 text-gray-500" />
                                 )}
@@ -882,6 +896,11 @@ export function Resources() {
                                       Word
                                     </span>
                                   )}
+                                  {isImage && (
+                                    <span className="px-1.5 py-0.5 text-xs font-medium bg-purple-100 text-purple-700 rounded flex-shrink-0">
+                                      Image
+                                    </span>
+                                  )}
                                 </div>
                                 <p className="text-xs text-gray-400 mt-0.5">
                                   {isLink ? (
@@ -903,12 +922,19 @@ export function Resources() {
                                 >
                                   <ExternalLink className="h-4 w-4" />
                                 </a>
-                              ) : isWord ? (
+                              ) : isWord || isImage ? (
                                 <>
                                   <button
+                                    onClick={() => handlePreview(resource)}
+                                    className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                    title={isImage ? 'View Image' : 'View Document'}
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
+                                  <button
                                     onClick={() => handleDownload(resource)}
-                                    className="p-2 text-sky-600 hover:bg-sky-50 rounded-lg transition-colors"
-                                    title="Download to edit locally"
+                                    className={`p-2 ${isImage ? 'text-blue-600 hover:bg-blue-50' : 'text-sky-600 hover:bg-sky-50'} rounded-lg transition-colors`}
+                                    title="Download"
                                   >
                                     <Download className="h-4 w-4" />
                                   </button>
@@ -1004,6 +1030,15 @@ export function Resources() {
                   >
                     Your browser does not support the video tag.
                   </video>
+                </div>
+              ) : getFileType(previewResource.file_path) === 'image' ? (
+                <div className="w-full h-full flex items-center justify-center bg-gray-100 p-4">
+                  <img
+                    src={previewUrl}
+                    alt={previewResource.title}
+                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
+                    style={{ maxHeight: 'calc(95vh - 80px)' }}
+                  />
                 </div>
               ) : isMobile ? (
                 <iframe
@@ -1357,52 +1392,41 @@ export function Resources() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Additional Attachments
-                </label>
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 hover:border-blue-400 transition-colors">
-                  <input
-                    type="file"
-                    multiple
-                    onChange={handleAttachmentChange}
-                    className="hidden"
-                    id="email-attachments"
-                  />
-                  <label
-                    htmlFor="email-attachments"
-                    className="flex flex-col items-center cursor-pointer"
-                  >
-                    <Plus className="h-8 w-8 text-gray-400 mb-2" />
-                    <span className="text-sm text-gray-600">Click to add files</span>
-                    <span className="text-xs text-gray-400 mt-1">PDF, Word, images, etc.</span>
-                  </label>
-                </div>
-                {emailAttachments.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {emailAttachments.map((file, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileText className="h-4 w-4 text-gray-500 flex-shrink-0" />
-                          <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                          <span className="text-xs text-gray-400 flex-shrink-0">
-                            ({(file.size / 1024).toFixed(1)} KB)
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleRemoveAttachment(index)}
-                          className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors flex-shrink-0"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+              {emailResource?.file_path && emailResource.file_size > 0 && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <Link className="h-4 w-4 text-blue-600" />
+                        <span>Link URL</span>
+                        <span className="text-gray-400 font-normal">(optional)</span>
                       </div>
-                    ))}
+                    </label>
+                    <input
+                      type="url"
+                      value={emailLinkUrl}
+                      onChange={(e) => setEmailLinkUrl(e.target.value)}
+                      placeholder="https://example.com — clicking the image will open this link"
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    />
+                    {emailLinkUrl.trim() && (
+                      <p className="mt-1.5 text-xs text-emerald-600 flex items-center gap-1">
+                        <ExternalLink className="h-3 w-3" />
+                        The resource image in the email will be clickable and open this URL
+                      </p>
+                    )}
                   </div>
-                )}
-              </div>
+
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <FileText className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-blue-800">
+                        The document will be automatically attached to the email and sent directly to the recipients.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4 flex gap-3">

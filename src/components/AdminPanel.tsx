@@ -343,10 +343,17 @@ export function AdminPanel() {
       if (!(await dialog.confirm('Are you sure you want to delete this contact?'))) return;
       try {
         setLoading(true);
-        const { error } = await supabase.from('contacts').delete().eq('id', id);
+        const { data, error } = await supabase
+          .from('contacts')
+          .delete()
+          .eq('id', id)
+          .select('id');
         if (error) throw error;
+        if (!data || data.length === 0) {
+          throw new Error('You do not have permission to delete this contact.');
+        }
+        setContacts(prev => prev.filter(c => c.id !== id));
         await dialog.alert('Contact deleted successfully');
-        loadData();
       } catch (error) {
         console.error('Error deleting contact:', error);
         await dialog.alert(`Failed to delete contact: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -644,16 +651,30 @@ export function AdminPanel() {
 
     setLoading(true);
     try {
-      for (const contactId of Array.from(selectedContacts)) {
-        await supabase.from('contacts').delete().eq('id', contactId);
+      const ids = Array.from(selectedContacts);
+      const { data, error } = await supabase
+        .from('contacts')
+        .delete()
+        .in('id', ids)
+        .select('id');
+      if (error) throw error;
+
+      const deletedIds = new Set((data || []).map(r => r.id));
+      if (deletedIds.size === 0) {
+        throw new Error('You do not have permission to delete the selected contacts.');
       }
 
-      await dialog.alert(`Successfully deleted ${selectedContacts.size} contact(s)`);
+      setContacts(prev => prev.filter(c => !deletedIds.has(c.id)));
       setSelectedContacts(new Set());
-      loadData();
+
+      if (deletedIds.size < ids.length) {
+        await dialog.alert(`Deleted ${deletedIds.size} of ${ids.length} contact(s). Some could not be deleted due to permissions.`);
+      } else {
+        await dialog.alert(`Successfully deleted ${deletedIds.size} contact(s)`);
+      }
     } catch (error) {
       console.error('Error deleting contacts:', error);
-      await dialog.alert('Failed to delete contacts');
+      await dialog.alert(`Failed to delete contacts: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
