@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Bell, X, Search, Filter, Pin, AlertTriangle, Info, FileText, Check, ChevronDown, Calendar, Clock, Paperclip, Download, Eye } from 'lucide-react';
+import { Megaphone, Bell, X, Search, Filter, Pin, AlertTriangle, Info, FileText, Check, ChevronDown, Calendar, Clock, Paperclip, Download, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -285,7 +285,7 @@ export function Announcements({ onNavigateToAnnouncements }: AnnouncementsProps)
         className="relative flex items-center justify-center w-10 h-10 rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors"
         title="Announcements"
       >
-        <Bell className="w-5 h-5 text-slate-600" />
+        <Megaphone className="w-5 h-5 text-slate-600" />
         {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-bold text-white bg-red-500 rounded-full animate-pulse">
             {unreadCount > 99 ? '99+' : unreadCount}

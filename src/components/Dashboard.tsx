@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket, FileSearch, Fuel, Eye } from 'lucide-react';
+import { LogOut, Search as SearchIcon, UserPlus, History, Upload, Shield, Database, Users, FileCheck, AlertCircle, FileText, Key, Award, DollarSign, Calendar, ClipboardList, ChevronDown, Settings, Mail, Bell, Megaphone, MessageSquare, MessageCircle, Clock, Coffee, Briefcase, Palmtree, X, Ticket, FileSearch, Fuel, Eye, Gift } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 import { useDeviceDetection } from '../lib/deviceDetection';
@@ -40,8 +40,9 @@ import { NotificationBell } from './NotificationBell';
 import { FileViewer } from './FileViewer';
 import { FileViewerModule } from './FileViewer/FileViewerModule';
 import { BudgetTransactionLog } from './BudgetTransactionLog';
+import { GiveawayInventory } from './GiveawayInventory';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log' | 'giveaway-inventory';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user, refreshSalesPerson, chatEnabled } = useAuth();
@@ -387,6 +388,7 @@ export function Dashboard() {
     { id: 'my-prospect-requests' as Tab, label: 'My Prospect Requests', icon: UserPlus, module: 'my_prospect_requests', color: 'text-cyan-600' },
     { id: 'my-budget-requests' as Tab, label: 'My Friends and Family', icon: DollarSign, module: 'my_budget_requests', color: 'text-emerald-600' },
     { id: 'file-viewer' as Tab, label: 'File Viewer', icon: FileSearch, module: 'file_viewer', color: 'text-blue-600' },
+    { id: 'giveaway-inventory' as Tab, label: 'Giveaway Inventory', icon: Gift, module: 'giveaway_inventory', color: 'text-teal-600' },
   ];
 
   // Administrative tabs that will be in the dropdown
@@ -880,6 +882,7 @@ export function Dashboard() {
         {activeTab === 'my-budget-requests' && salesPerson?.friends_family_enabled && hasAccess('my_budget_requests') && <MyBudgetRequests />}
         {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewerModule />}
         {activeTab === 'budget-log' && salesPerson?.budget_display_enabled && <BudgetTransactionLog onBack={() => setActiveTab('search')} />}
+        {activeTab === 'giveaway-inventory' && hasAccess('giveaway_inventory') && <GiveawayInventory />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

@@ -205,7 +205,7 @@ export function ConflictCheck() {
                       Potential conflict detected! Found {results.length} matching contact{results.length > 1 ? 's' : ''} in the system:
                     </p>
                     <p className="mt-1 text-sm">
-                      Please contact <span className="font-semibold">Michele Rivelli</span> to discuss further steps.
+                      Please contact supervisor to discuss further steps.
                     </p>
                   </div>
                 </div>

@@ -184,18 +184,37 @@ export function Resources() {
   const fetchMyContacts = async () => {
     if (!salesPerson?.id) return;
 
-    const { data, error } = await supabase
-      .from('contacts')
-      .select('id, first_name, last_name, company, email')
-      .eq('assigned_to', salesPerson.id)
-      .not('email', 'is', null)
-      .neq('email', '')
-      .order('last_name')
-      .order('first_name');
+    const { data: sharedAccess } = await supabase
+      .from('shared_contact_access')
+      .select('salesperson_id')
+      .eq('viewer_id', salesPerson.id);
 
-    if (!error && data) {
-      setMyContacts(data);
+    const accessibleIds = [salesPerson.id];
+    if (sharedAccess) {
+      accessibleIds.push(...sharedAccess.map(sa => sa.salesperson_id));
     }
+
+    const [assignedResult, globalResult] = await Promise.all([
+      supabase
+        .from('contacts')
+        .select('id, first_name, last_name, company, email, assignments!inner(salesperson_id)')
+        .in('assignments.salesperson_id', accessibleIds)
+        .not('email', 'is', null)
+        .neq('email', ''),
+      supabase
+        .from('contacts')
+        .select('id, first_name, last_name, company, email')
+        .eq('is_global', true)
+        .not('email', 'is', null)
+        .neq('email', '')
+    ]);
+
+    const assigned = assignedResult.data || [];
+    const global = globalResult.data || [];
+    const assignedIds = new Set(assigned.map(c => c.id));
+    const uniqueGlobal = global.filter(c => !assignedIds.has(c.id));
+
+    setMyContacts([...assigned, ...uniqueGlobal]);
   };
 
   const fetchResources = async () => {

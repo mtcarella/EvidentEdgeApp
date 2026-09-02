@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Bell, X, Check, CheckCheck } from 'lucide-react';
+import { Bell, X, Check, CheckCheck, DollarSign, FileText, MessageSquare, Info } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -87,6 +87,21 @@ export function NotificationBell() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  const getNotificationIcon = (type: string) => {
+    switch (type) {
+      case 'budget_edit':
+        return { icon: DollarSign, bg: 'bg-emerald-100', color: 'text-emerald-600' };
+      case 'resource_upload':
+      case 'new_resource':
+        return { icon: FileText, bg: 'bg-blue-100', color: 'text-blue-600' };
+      case 'message':
+      case 'communication':
+        return { icon: MessageSquare, bg: 'bg-amber-100', color: 'text-amber-600' };
+      default:
+        return { icon: Info, bg: 'bg-slate-100', color: 'text-slate-500' };
+    }
+  };
+
   return (
     <div className="relative" ref={ref}>
       <button
@@ -125,10 +140,18 @@ export function NotificationBell() {
               notifications.map(n => (
                 <div
                   key={n.id}
-                  className={`group flex items-start gap-2 px-4 py-3 border-b border-slate-50 last:border-b-0 transition-colors ${
+                  className={`group flex items-start gap-2.5 px-4 py-3 border-b border-slate-50 last:border-b-0 transition-colors ${
                     n.read ? 'bg-white' : 'bg-blue-50/50'
                   }`}
                 >
+                  {(() => {
+                    const { icon: TypeIcon, bg, color } = getNotificationIcon(n.type || '');
+                    return (
+                      <div className={`shrink-0 mt-0.5 w-7 h-7 rounded-full ${bg} flex items-center justify-center`}>
+                        <TypeIcon className={`w-3.5 h-3.5 ${color}`} />
+                      </div>
+                    );
+                  })()}
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm leading-snug ${n.read ? 'text-slate-600' : 'text-slate-800 font-medium'}`}>
                       {n.message}
