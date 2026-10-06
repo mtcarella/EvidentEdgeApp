@@ -493,7 +493,7 @@ export function ContactSearch() {
   return (
     <>
       <BirthdayBanner />
-      <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
         <div className="flex items-center justify-between mb-6 p-3 bg-slate-50 border border-slate-200 rounded-lg md:p-0 md:bg-transparent md:border-0 md:rounded-none">
           <h2 className="text-2xl font-bold text-slate-900">Search Contacts</h2>
           <button

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings, LogIn } from 'lucide-react';
+import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings, LogIn, Coffee } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -9,11 +9,12 @@ import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { ContactView } from './ContactView';
 import { ModulePermissionsManager } from './ModulePermissionsManager';
+import { LunchLog } from './LunchLog';
 import { UserEditPanel } from './UserEditPanel';
 import { findAllDuplicates, DuplicateGroup } from '../lib/duplicateChecker';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
 import * as XLSX from 'xlsx';
-import { getTodayDateString } from '../lib/dateUtils';
+import { getTodayDateString, formatDateShort } from '../lib/dateUtils';
 
 interface Contact {
   id: string;
@@ -61,7 +62,7 @@ interface SalesPerson {
   file_viewer_enabled?: boolean;
 }
 
-type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions' | 'system_settings';
+type ViewMode = 'contacts' | 'salespeople' | 'assignments' | 'module_permissions' | 'system_settings' | 'lunch_log';
 
 type SortField = 'name' | 'type' | 'email' | 'phone' | 'company' | 'salesperson' | 'evident_paralegal';
 type SortDirection = 'asc' | 'desc' | null;
@@ -979,21 +980,18 @@ export function AdminPanel() {
       let filename = '';
 
       if (viewMode === 'contacts') {
-        if (selectedContacts.size === 0) {
-          await dialog.alert('Please select at least one contact to export');
+        const contactsToExport = selectedContacts.size > 0
+          ? sortedContacts.filter(c => selectedContacts.has(c.id))
+          : sortedContacts;
+
+        if (contactsToExport.length === 0) {
+          await dialog.alert('No contacts to export with current filters');
           return;
         }
 
         setLoading(true);
 
-        const contactIds = Array.from(selectedContacts);
-        const selectedContactsData = contacts.filter(c => selectedContacts.has(c.id));
-
-        if (selectedContactsData.length === 0) {
-          await dialog.alert('No data to export');
-          setLoading(false);
-          return;
-        }
+        const contactIds = contactsToExport.map(c => c.id);
 
         const { data: meetings } = await supabase
           .from('meetings')
@@ -1010,7 +1008,7 @@ export function AdminPanel() {
           meetingsByContact.get(contactId)?.push(meeting);
         });
 
-        const worksheetData = selectedContactsData.map((contact: any) => {
+        const worksheetData = contactsToExport.map((contact: any) => {
           const contactMeetings = meetingsByContact.get(contact.id) || [];
           const meetingsText = contactMeetings
             .map(m => `${m.meeting_date}: ${m.notes}`)
@@ -1018,15 +1016,31 @@ export function AdminPanel() {
 
           return {
             'Name': contact.name || '',
+            'First Name': contact.first_name || '',
+            'Last Name': contact.last_name || '',
             'Type': contact.type || '',
+            'Client Type': contact.client_type || '',
+            'Grade': contact.grade || '',
             'Email': contact.email || '',
             'Phone': contact.phone || '',
+            'Cell Phone': contact.cell_phone || '',
             'Company': contact.company || '',
             'Branch': contact.branch || '',
             'Address': contact.address || '',
+            'Birthday': contact.birthday ? formatDateShort(contact.birthday) : '',
+            'Drinks': contact.drinks ? 'Yes' : 'No',
+            'Driver': contact.driver ? 'Yes' : 'No',
             'Evident Paralegal': contact.evident_paralegal || '',
+            'Preferred Surveyor': contact.preferred_surveyor || '',
+            'Preferred Underwriter': contact.preferred_uw || '',
+            'Preferred Closer': contact.preferred_closer || '',
+            'Client Paralegal/Processor': contact.client_paralegal_processor || '',
+            'Client Identifier No.': contact.client_identifier_no || '',
+            'Marketing Points': contact.marketing_points ?? '',
             'Assigned To': contact.assignments?.[0]?.sales_person?.name || 'Unassigned',
             'Notes': contact.notes || '',
+            'Processor Notes': contact.processor_notes || '',
+            'Global Contact': contact.is_global ? 'Yes' : 'No',
             'Meetings': meetingsText,
             'Created At': new Date(contact.created_at).toLocaleString(),
           };
@@ -1143,6 +1157,25 @@ export function AdminPanel() {
             <div className="flex items-center gap-2">
               <Settings className="w-4 h-4" />
               System Settings
+            </div>
+          </button>
+        )}
+        {isAdmin && (
+          <button
+            onClick={() => {
+              setViewMode('lunch_log');
+              setEditingId(null);
+              setEditForm({});
+            }}
+            className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              viewMode === 'lunch_log'
+                ? 'bg-amber-600 text-white'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <Coffee className="w-4 h-4" />
+              Lunch Log
             </div>
           </button>
         )}
@@ -1603,6 +1636,10 @@ export function AdminPanel() {
 
       {viewMode === 'system_settings' && isSuperAdmin && (
         <SystemSettingsPanel />
+      )}
+
+      {viewMode === 'lunch_log' && isAdmin && (
+        <LunchLog />
       )}
 
       {viewMode === 'salespeople' && (

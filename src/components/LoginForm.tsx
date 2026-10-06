@@ -152,7 +152,7 @@ export function LoginForm() {
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <div className="flex items-center justify-center mb-8">
             <img
-              src="/Copy_of_Copy_of_Evident_Logo_26_(3).png"
+              src="/Copy_of_Copy_of_Evident_Logo_26_(7).png"
               alt="Evident Title Agency"
               className="h-32 object-contain"
             />

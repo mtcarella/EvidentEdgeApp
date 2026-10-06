@@ -10,6 +10,7 @@ import { ContactSearch } from './ContactSearch';
 import { AddProspect } from './AddProspect';
 import { AuditLog } from './AuditLog';
 import { ImportData } from './ImportData';
+import { BatchImportWizard } from './BatchImport';
 import { AdminPanel } from './AdminPanel';
 import { MyContacts } from './MyContacts';
 import { WireManagement } from './WireManagement';
@@ -41,8 +42,10 @@ import { FileViewer } from './FileViewer';
 import { FileViewerModule } from './FileViewer/FileViewerModule';
 import { BudgetTransactionLog } from './BudgetTransactionLog';
 import { GiveawayInventory } from './GiveawayInventory';
+import { LunchClock } from './LunchClock';
+import { LunchLog } from './LunchLog';
 
-type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log' | 'giveaway-inventory';
+type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log' | 'giveaway-inventory' | 'lunch-clock' | 'lunch-log';
 
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user, refreshSalesPerson, chatEnabled } = useAuth();
@@ -65,6 +68,7 @@ export function Dashboard() {
   const [pendingYankeeCount, setPendingYankeeCount] = useState(0);
   const [pendingProspectCount, setPendingProspectCount] = useState(0);
   const [pendingBudgetRequestCount, setPendingBudgetRequestCount] = useState(0);
+  const [activeLunchCount, setActiveLunchCount] = useState(0);
   const adminDropdownRef = useRef<HTMLDivElement>(null);
   const messagesDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -332,6 +336,28 @@ export function Dashboard() {
     };
   }, [isSuperAdminUser, fetchPendingYankeeCount, fetchPendingProspectCount, fetchPendingBudgetRequestCount]);
 
+  // Track active lunch sessions for the Lunch Log button badge
+  const fetchActiveLunchCount = useCallback(async () => {
+    if (!isAdmin || !hasAccess('lunch_log')) { setActiveLunchCount(0); return; }
+    const { count } = await supabase
+      .from('lunch_sessions')
+      .select('*', { count: 'exact', head: true })
+      .is('clock_out', null);
+    setActiveLunchCount(count || 0);
+  }, [isAdmin, hasAccess]);
+
+  useEffect(() => {
+    if (!isAdmin || !hasAccess('lunch_log')) return;
+    fetchActiveLunchCount();
+    const lunchChannel = supabase
+      .channel('active-lunch-badge')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lunch_sessions' }, () => {
+        fetchActiveLunchCount();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(lunchChannel); };
+  }, [isAdmin, hasAccess, fetchActiveLunchCount]);
+
   const getOOOStatusInfo = (statusType: string) => {
     const statusConfig: Record<string, { icon: typeof Clock; label: string; color: string }> = {
       lunch: { icon: Coffee, label: 'At Lunch', color: 'bg-amber-100 text-amber-800' },
@@ -406,6 +432,7 @@ export function Dashboard() {
     { id: 'prospect-requests' as Tab, label: 'Prospect Requests', icon: UserPlus, module: 'prospect_requests', color: 'text-cyan-600' },
     { id: 'budget-requests' as Tab, label: 'Friends and Family', icon: DollarSign, module: 'budget_requests', color: 'text-emerald-600' },
     { id: 'budget-management' as Tab, label: 'Budget Management', icon: DollarSign, module: 'budget_edit', color: 'text-emerald-600' },
+    { id: 'lunch-log' as Tab, label: 'Lunch Log', icon: Coffee, module: 'lunch_log', color: 'text-amber-600' },
   ];
 
   const regularTabs = permissionsLoading ? [] : allRegularTabs.filter(tab => {
@@ -470,7 +497,9 @@ export function Dashboard() {
         const currentTabHasAccess = allTabs.some(tab => tab.id === activeTab) ||
           (activeTab === 'announcements' && hasAccess('announcements')) ||
           (activeTab === 'view-communications' && hasAccess('view_communications')) ||
-          (activeTab === 'budget-log' && salesPerson?.budget_display_enabled);
+          (activeTab === 'budget-log' && salesPerson?.budget_display_enabled) ||
+          (activeTab === 'lunch-clock' && hasAccess('lunch_clock') && salesPerson?.lunch_required) ||
+          (activeTab === 'lunch-log' && isAdmin && hasAccess('lunch_log'));
         if (!currentTabHasAccess) {
           setActiveTab(allTabs[0].id);
         }
@@ -522,12 +551,15 @@ export function Dashboard() {
           <div className={`flex ${isMobile ? 'flex-col gap-3' : 'items-center justify-between'}`}>
             <div className={`${isMobile ? 'w-full' : 'min-w-0 flex-1'}`}>
               <div className={`flex ${isMobile ? 'flex-col' : 'flex-row items-center'} gap-4`}>
-                <img
-                  src="/Copy_of_Copy_of_Evident_Logo_26_(3).png"
-                  alt="Evident Title Agency Logo"
-                  className={`${isMobile ? 'h-16' : 'h-20'} object-contain border-2 border-slate-300 rounded-lg p-2 cursor-pointer`}
-                  onClick={() => setActiveTab('search')}
-                />
+                <div className="flex flex-col items-center gap-2">
+                  <img
+                    src="/Copy_of_Copy_of_Evident_Logo_26_(7).png"
+                    alt="Evident Title Agency Logo"
+                    className={`${isMobile ? 'h-20' : 'h-28'} object-contain cursor-pointer`}
+                    onClick={() => setActiveTab('search')}
+                  />
+
+                </div>
                 <div className={`flex flex-col gap-1 ${isMobile ? 'mt-0' : ''}`}>
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className={`text-slate-600 whitespace-nowrap ${isMobile ? 'text-xs' : 'text-sm'}`}>
@@ -575,6 +607,7 @@ export function Dashboard() {
                 <div className="relative">
                   <Announcements onNavigateToAnnouncements={() => setActiveTab('announcements')} />
                 </div>
+
                 {chatEnabled && hasAccess('direct_messages') && (
                   <div className="relative" ref={messagesDropdownRef}>
                     <button
@@ -730,6 +763,20 @@ export function Dashboard() {
                 <LogOut className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
                 <span className={isMobile ? 'text-xs' : 'text-sm'}>Sign Out</span>
               </button>
+              {hasAccess('lunch_clock') && salesPerson?.lunch_required && (
+                <button
+                  onClick={() => { setActiveTab('lunch-clock'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded-lg border transition-all whitespace-nowrap ${
+                    activeTab === 'lunch-clock'
+                      ? 'bg-red-600 text-white border-red-600 shadow-md'
+                      : 'bg-red-50 text-red-700 border-red-300 hover:bg-red-100 hover:border-red-400 hover:shadow-sm'
+                  }`}
+                >
+                  <Coffee className={isMobile ? 'w-4 h-4' : 'w-5 h-5'} />
+                  <span className={`${isMobile ? 'text-xs' : 'text-[40px]'} ${activeTab === 'lunch-clock' ? 'text-gray-800' : 'text-[#de0b0b]'}`}>Lunch Clock</span>
+                </button>
+              )}
+
             </div>
           </div>
         </div>
@@ -815,6 +862,28 @@ export function Dashboard() {
               </button>
             )}
 
+            {isAdmin && hasAccess('lunch_log') && (
+              <button
+                onClick={() => { setActiveTab('lunch-log'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                title="Admin Lunch Log"
+                className={`relative flex items-center font-medium whitespace-nowrap transition-all rounded-lg border ${
+                  isMobile ? 'gap-1 px-2.5 py-2 text-xs' : 'gap-2 px-3.5 py-2.5 text-sm'
+                } ${
+                  activeTab === 'lunch-log'
+                    ? 'bg-amber-700 text-white border-amber-700 shadow-lg ring-2 ring-amber-300'
+                    : 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700 hover:border-amber-700 shadow-sm hover:shadow-md'
+                }`}
+              >
+                <Coffee className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
+                <span>{isMobile ? 'Lunch' : 'Admin Lunch Log'}</span>
+                {activeLunchCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[20px] h-[20px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full shadow-md border-2 border-white animate-pulse">
+                    {activeLunchCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {adminTabs.length > 0 && regularTabs.length > 0 && (
               <div className={`${isMobile ? 'w-px h-10' : 'w-px h-12'} bg-slate-300 mx-1`}></div>
             )}
@@ -857,7 +926,7 @@ export function Dashboard() {
         {activeTab === 'search' && hasAccess('contact_search') && <ContactSearch />}
         {activeTab === 'conflict' && hasAccess('conflict_check') && <ConflictCheck />}
         {activeTab === 'add' && hasAccess('add_prospect') && <AddProspect />}
-        {activeTab === 'import' && hasAccess('import_data') && <ImportData />}
+        {activeTab === 'import' && hasAccess('import_data') && <BatchImportWizard />}
         {activeTab === 'wires' && (hasAccess('verify_wires') || hasAccess('incoming_wires')) && <WireManagement />}
         {activeTab === 'processor-report' && hasAccess('submit_performance_report') && <ProcessorReportForm />}
         {activeTab === 'resources' && hasAccess('resources') && <Resources />}
@@ -883,6 +952,8 @@ export function Dashboard() {
         {activeTab === 'file-viewer' && salesPerson?.file_viewer_enabled && <FileViewerModule />}
         {activeTab === 'budget-log' && salesPerson?.budget_display_enabled && <BudgetTransactionLog onBack={() => setActiveTab('search')} />}
         {activeTab === 'giveaway-inventory' && hasAccess('giveaway_inventory') && <GiveawayInventory />}
+        {activeTab === 'lunch-clock' && hasAccess('lunch_clock') && salesPerson?.lunch_required && <LunchClock />}
+        {activeTab === 'lunch-log' && isAdmin && hasAccess('lunch_log') && <LunchLog />}
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-4 mt-8">

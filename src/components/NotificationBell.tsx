@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Bell, X, Check, CheckCheck, DollarSign, FileText, MessageSquare, Info } from 'lucide-react';
+import { Bell, X, Check, CheckCheck, DollarSign, FileText, MessageSquare, Info, Coffee } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -97,6 +97,8 @@ export function NotificationBell() {
       case 'message':
       case 'communication':
         return { icon: MessageSquare, bg: 'bg-amber-100', color: 'text-amber-600' };
+      case 'lunch_clock':
+        return { icon: Coffee, bg: 'bg-amber-100', color: 'text-amber-600' };
       default:
         return { icon: Info, bg: 'bg-slate-100', color: 'text-slate-500' };
     }

@@ -50,6 +50,7 @@ const AVAILABLE_MODULES: ModuleDefinition[] = [
   { name: 'budget_display', label: 'Budget Display', description: 'Show budget balance on main page for this user', special: true },
   { name: 'budget_edit', label: 'Budget Edit', description: 'Allow admin to edit budget amount for this user', special: true },
   { name: 'edit_admin_fields', label: 'Edit Admin Fields', description: 'Edit assignment, paralegal, preferred vendors, and processor notes', special: true },
+  { name: 'lunch_clock', label: 'Lunch Clock', description: 'Clock in/out for lunch breaks' },
 ];
 
 export function ModulePermissionsManager() {

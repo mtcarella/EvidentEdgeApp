@@ -407,45 +407,21 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     setQuickMeetingContactId(contactId);
   };
 
-  const exportMyContacts = async () => {
-    if (!salesPerson?.id) {
-      await dialog.alert('Unable to identify current user');
+  const exportMyContacts = async (contactsToExport: any[]) => {
+    if (contactsToExport.length === 0) {
+      await dialog.alert('No contacts to export with current filters');
       return;
     }
 
     setExportLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('contacts')
-        .select(`
-          name,
-          type,
-          email,
-          phone,
-          company,
-          branch,
-          address,
-          birthday,
-          drinks,
-          notes,
-          created_at,
-          assignments!inner (
-            salesperson_id
-          )
-        `)
-        .eq('assignments.salesperson_id', salesPerson.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      if (!data || data.length === 0) {
-        await dialog.alert('No contacts assigned to you');
-        return;
-      }
-
-      const worksheetData = data.map((contact: any) => ({
+      const worksheetData = contactsToExport.map((contact: any) => ({
         'Name': contact.name || '',
+        'First Name': contact.first_name || '',
+        'Last Name': contact.last_name || '',
         'Type': contact.type || '',
+        'Client Type': contact.client_type || '',
+        'Grade': contact.grade || '',
         'Email': contact.email || '',
         'Phone': contact.phone || '',
         'Cell Phone': contact.cell_phone || '',
@@ -454,7 +430,17 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         'Address': contact.address || '',
         'Birthday': contact.birthday ? formatDateShort(contact.birthday) : '',
         'Drinks': contact.drinks ? 'Yes' : 'No',
+        'Driver': contact.driver ? 'Yes' : 'No',
+        'Preferred Surveyor': contact.preferred_surveyor || '',
+        'Preferred Underwriter': contact.preferred_uw || '',
+        'Preferred Closer': contact.preferred_closer || '',
+        'Client Paralegal/Processor': contact.client_paralegal_processor || '',
+        'Evident Paralegal': contact.evident_paralegal || '',
+        'Client Identifier No.': contact.client_identifier_no || '',
+        'Marketing Points': contact.marketing_points ?? '',
         'Notes': contact.notes || '',
+        'Processor Notes': contact.processor_notes || '',
+        'Global Contact': contact.is_global ? 'Yes' : 'No',
         'Created At': new Date(contact.created_at).toLocaleString(),
       }));
 
@@ -647,7 +633,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
               </button>
             )}
             <button
-              onClick={exportMyContacts}
+              onClick={() => exportMyContacts(sortedContacts)}
               disabled={exportLoading}
               className={`bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center text-sm flex-shrink-0 ${
                 isMobile ? 'px-3 py-2 gap-1' : 'px-4 py-2 gap-2'
