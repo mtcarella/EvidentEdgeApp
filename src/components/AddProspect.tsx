@@ -43,7 +43,7 @@ export function AddProspect() {
   const [cloneSearchTerm, setCloneSearchTerm] = useState('');
   const [cloneSearchResults, setCloneSearchResults] = useState<any[]>([]);
   const [searchingClone, setSearchingClone] = useState(false);
-  const { user, salesPerson, isAdmin, isAdminOrProcessor } = useAuth();
+  const { user, salesPerson, isAdminOrProcessor } = useAuth();
   const dialog = useDialog();
 
   const isSuperAdmin = salesPerson?.role === 'super_admin';
@@ -56,26 +56,27 @@ export function AddProspect() {
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
   useEffect(() => {
-    if (isAdmin) {
-      loadSalespeople();
-    } else if (salesPerson?.id) {
+    loadSalespeople();
+  }, []);
+
+  useEffect(() => {
+    if (salesPerson?.id && !selectedSalesperson) {
       setSelectedSalesperson(salesPerson.id);
     }
-  }, [isAdmin, salesPerson]);
+  }, [salesPerson?.id]);
 
   const loadSalespeople = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('sales_people')
       .select('id, name')
       .eq('is_active', true)
       .order('name');
 
-    if (data) {
-      setSalespeople(data);
-      if (data.length > 0 && !selectedSalesperson) {
-        setSelectedSalesperson(data[0].id);
-      }
+    if (error) {
+      console.error('Error loading salespeople:', error);
+      return;
     }
+    setSalespeople(data ?? []);
   };
 
   const searchContactsForClone = async (searchTerm: string) => {
@@ -299,9 +300,7 @@ export function AddProspect() {
         }
 
         if (isNewContact) {
-          const assignedSalesperson = isAdmin
-            ? salespeople.find(s => s.id === selectedSalesperson)?.name ?? 'Unknown'
-            : salesPerson?.name ?? 'Unknown';
+          const assignedSalesperson = salespeople.find(s => s.id === selectedSalesperson)?.name ?? 'Unknown';
 
           const prospectName = [firstName, lastName].filter(Boolean).join(' ') || company || 'Unknown';
 
@@ -405,6 +404,7 @@ export function AddProspect() {
         message: `A new prospect request has been submitted and is awaiting your approval.
 
 Submitted By: ${submitterName}
+Assigned To: ${salespeople.find(s => s.id === selectedSalesperson)?.name ?? 'Unknown'}
 Prospect Name: ${prospectName}
 Type: ${typeLabels[type] ?? type}
 Date Met: ${formatDateDisplay(dateMet)}
@@ -469,6 +469,7 @@ Please log in to Evident Edge to review and approve or deny this request.`,
   };
 
   const resetForm = () => {
+    setSelectedSalesperson(salesPerson?.id ?? '');
     setFirstName('');
     setLastName('');
     setEmail('');
@@ -638,35 +639,21 @@ Please log in to Evident Edge to review and approve or deny this request.`,
           <label htmlFor="assignedTo" className="block text-sm font-medium text-slate-700 mb-2">
             Assign to Salesperson *
           </label>
-          {isAdmin ? (
-            <>
-              <select
-                id="assignedTo"
-                value={selectedSalesperson}
-                onChange={(e) => setSelectedSalesperson(e.target.value)}
-                className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
-              >
-                {salespeople.map((sp) => (
-                  <option key={sp.id} value={sp.id}>
-                    {sp.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-slate-500 mt-1">As an admin, you can assign to any salesperson</p>
-            </>
-          ) : (
-            <>
-              <input
-                id="assignedTo"
-                type="text"
-                value={salesPerson?.name || 'Loading...'}
-                disabled
-                className="w-full px-4 py-2.5 border border-slate-300 rounded-lg bg-slate-50 text-slate-600 cursor-not-allowed"
-              />
-              <p className="text-xs text-slate-500 mt-1">New contacts are automatically assigned to you</p>
-            </>
-          )}
+          <select
+            id="assignedTo"
+            value={selectedSalesperson}
+            onChange={(e) => setSelectedSalesperson(e.target.value)}
+            className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+            required
+          >
+            {!selectedSalesperson && <option value="">Loading...</option>}
+            {salespeople.map((sp) => (
+              <option key={sp.id} value={sp.id}>
+                {sp.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-500 mt-1">Defaults to you. Choose another salesperson if this prospect belongs to someone else.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

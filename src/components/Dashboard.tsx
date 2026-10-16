@@ -47,6 +47,8 @@ import { LunchLog } from './LunchLog';
 
 type Tab = 'mycontacts' | 'search' | 'conflict' | 'add' | 'import' | 'wires' | 'resources' | 'audit' | 'admin' | 'submissions' | 'rewards' | 'meetings' | 'processor-report' | 'weekly-reports' | 'announcements' | 'announcements-admin' | 'employee-communication' | 'sms-management' | 'view-communications' | 'upload-resource' | 'direct-messages' | 'yankees-tickets' | 'prospect-requests' | 'my-prospect-requests' | 'budget-management' | 'budget-requests' | 'my-budget-requests' | 'file-viewer' | 'budget-log' | 'giveaway-inventory' | 'lunch-clock' | 'lunch-log';
 
+const ACTIVE_TAB_KEY = 'dashboard_active_tab';
+
 export function Dashboard() {
   const { salesPerson, isAdmin, isAdminOrProcessor, signOut, user, refreshSalesPerson, chatEnabled } = useAuth();
   const { isMobile, isTablet } = useDeviceDetection();
@@ -449,7 +451,13 @@ export function Dashboard() {
   });
   const adminTabs = permissionsLoading ? [] : allAdminTabs.filter(tab => hasAccess(tab.module));
 
-  const [activeTab, setActiveTab] = useState<Tab>('search');
+  const [activeTab, setActiveTab] = useState<Tab>(
+    () => (sessionStorage.getItem(ACTIVE_TAB_KEY) as Tab | null) ?? 'search'
+  );
+
+  useEffect(() => {
+    sessionStorage.setItem(ACTIVE_TAB_KEY, activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'view-communications') {
@@ -490,7 +498,7 @@ export function Dashboard() {
   }, [showAdminDropdown]);
 
   useEffect(() => {
-    if (!permissionsLoading) {
+    if (!permissionsLoading && salesPerson) {
       const allTabs = [...regularTabs, ...adminTabs];
       if (allTabs.length > 0) {
         // Check if current tab has access (including standalone tabs like announcements and view-communications)
