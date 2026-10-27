@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle, Navigation } from 'lucide-react';
+import { User, Users, Briefcase, Scale, Wrench, CreditCard as Edit2, X, Save, Loader, ArrowUp, ArrowDown, Search, Eye, Download, Mail, CheckSquare, Square, Calendar, DollarSign, ChevronDown, ChevronUp, Trash2, AlertTriangle, Navigation, Gift } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -88,6 +88,8 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
   const [deleteInProgress, setDeleteInProgress] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [budgetWarning, setBudgetWarning] = useState<string | null>(null);
+  const [holidayInviteIds, setHolidayInviteIds] = useState<Set<string>>(new Set());
+  const [togglingInviteIds, setTogglingInviteIds] = useState<Set<string>>(new Set());
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -131,7 +133,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         accessibleSalespeopleIds.push(...sharedAccess.map(sa => sa.salesperson_id));
       }
 
-      const [assignedResult, globalResult] = await Promise.all([
+      const [assignedResult, globalResult, invitesResult] = await Promise.all([
         supabase
           .from('contacts')
           .select(`
@@ -146,11 +148,19 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
           .from('contacts')
           .select('*')
           .eq('is_global', true)
-          .order('created_at', { ascending: false })
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('holiday_invites')
+          .select('contact_id')
       ]);
 
       if (assignedResult.error) throw assignedResult.error;
       if (globalResult.error) throw globalResult.error;
+      if (invitesResult.error) {
+        console.error('Error loading holiday invites:', invitesResult.error);
+      } else {
+        setHolidayInviteIds(new Set((invitesResult.data ?? []).map(r => r.contact_id)));
+      }
 
       const assignedContacts = assignedResult.data || [];
       const globalContacts = globalResult.data || [];
@@ -166,6 +176,36 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     }
   };
 
+
+  const toggleHolidayInvite = async (contactId: string) => {
+    if (togglingInviteIds.has(contactId)) return;
+    const wasInvited = holidayInviteIds.has(contactId);
+    const applyInvite = (invited: boolean) =>
+      setHolidayInviteIds(prev => {
+        const next = new Set(prev);
+        if (invited) next.add(contactId); else next.delete(contactId);
+        return next;
+      });
+
+    applyInvite(!wasInvited);
+    setTogglingInviteIds(prev => new Set(prev).add(contactId));
+    try {
+      const { error } = wasInvited
+        ? await supabase.from('holiday_invites').delete().eq('contact_id', contactId)
+        : await supabase.from('holiday_invites').insert({ contact_id: contactId });
+      if (error) throw error;
+    } catch (error: any) {
+      console.error('Error updating holiday invite:', error);
+      applyInvite(wasInvited);
+      await dialog.alert('Could not update the Holiday Card/Party Invite list. Please try again.');
+    } finally {
+      setTogglingInviteIds(prev => {
+        const next = new Set(prev);
+        next.delete(contactId);
+        return next;
+      });
+    }
+  };
 
   const handleEdit = (contact: Contact) => {
     // Only open the modal, don't set inline editing state
@@ -441,14 +481,16 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         'Notes': contact.notes || '',
         'Processor Notes': contact.processor_notes || '',
         'Global Contact': contact.is_global ? 'Yes' : 'No',
+        'Holiday Card/Party Invite': holidayInviteIds.has(contact.id) ? 'Yes' : 'No',
         'Created At': new Date(contact.created_at).toLocaleString(),
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(worksheetData);
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'My Contacts');
+      const isHolidayExport = filterType === 'holiday';
+      XLSX.utils.book_append_sheet(workbook, worksheet, isHolidayExport ? 'Holiday Invites' : 'My Contacts');
 
-      XLSX.writeFile(workbook, `my_contacts_${getTodayDateString()}.xlsx`);
+      XLSX.writeFile(workbook, `${isHolidayExport ? 'holiday_card_party_invites' : 'my_contacts'}_${getTodayDateString()}.xlsx`);
     } catch (error) {
       console.error('Error exporting contacts:', error);
       await dialog.alert('Failed to export contacts');
@@ -459,7 +501,9 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
 
   let filteredContacts = filterType === 'all'
     ? contacts
-    : contacts.filter(c => c.type === filterType);
+    : filterType === 'holiday'
+      ? contacts.filter(c => holidayInviteIds.has(c.id))
+      : contacts.filter(c => c.type === filterType);
 
   if (searchQuery) {
     const query = searchQuery.toLowerCase();
@@ -518,6 +562,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     attorney: contacts.filter(c => c.type === 'attorney').length,
     loan_officer: contacts.filter(c => c.type === 'loan_officer').length,
     vendor: contacts.filter(c => c.type === 'vendor').length,
+    holiday: contacts.filter(c => holidayInviteIds.has(c.id)).length,
   };
 
   const handleConfirmDelete = async () => {
@@ -640,7 +685,7 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
               }`}
             >
               <Download className="w-4 h-4" />
-              <span>{isMobile ? (exportLoading ? 'Export...' : 'Export') : (exportLoading ? 'Exporting...' : 'Export My Contacts')}</span>
+              <span>{isMobile ? (exportLoading ? 'Export...' : 'Export') : (exportLoading ? 'Exporting...' : filterType === 'holiday' ? 'Export Invite List' : 'Export My Contacts')}</span>
             </button>
           </div>
         </div>
@@ -810,7 +855,23 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         >
           Vendors ({contactCounts.vendor})
         </button>
+        <button
+          onClick={() => setFilterType('holiday')}
+          className={`flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-lg font-medium text-[11px] transition-colors ${
+            filterType === 'holiday'
+              ? 'bg-red-700 text-white'
+              : 'bg-red-50 text-red-800 hover:bg-red-100 border border-red-200'
+          }`}
+        >
+          <Gift className="w-4 h-4" />
+          Holiday Card/Party Invite ({contactCounts.holiday})
+        </button>
         </div>
+        {filterType === 'holiday' && (
+          <p className="text-xs sm:text-sm text-slate-600">
+            Showing contacts you've marked for a holiday card or party invite. Use "Export Invite List" to download them as a spreadsheet.
+          </p>
+        )}
         <div className="mt-3 text-sm font-medium text-slate-700">
           Total Contacts: {sortedContacts.length}
         </div>
@@ -819,7 +880,11 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
       {sortedContacts.length === 0 ? (
         <div className="text-center py-12 text-slate-500">
           <User className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>No contacts found{filterType !== 'all' ? ` for ${typeLabels[filterType as keyof typeof typeLabels]}` : ''}</p>
+          <p>
+            {filterType === 'holiday'
+              ? 'No contacts marked for a holiday card or party invite yet. Check the Holiday Invite box on any contact to add them.'
+              : `No contacts found${filterType !== 'all' ? ` for ${typeLabels[filterType as keyof typeof typeLabels]}` : ''}`}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -1010,6 +1075,23 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
                             {contact.email && contact.phone && <span className="mx-2">•</span>}
                             {contact.phone && <span>{contact.phone}</span>}
                           </div>
+                          <label
+                            className={`mt-2 inline-flex items-center gap-2 cursor-pointer select-none rounded-md px-2 py-1 border transition-colors ${
+                              holidayInviteIds.has(contact.id)
+                                ? 'bg-red-50 border-red-200 text-red-800'
+                                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                            } ${isMobile ? 'text-[11px]' : 'text-xs'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={holidayInviteIds.has(contact.id)}
+                              disabled={togglingInviteIds.has(contact.id)}
+                              onChange={() => toggleHolidayInvite(contact.id)}
+                              className="w-3.5 h-3.5 rounded border-slate-300 text-red-700 focus:ring-red-500"
+                            />
+                            <Gift className="w-3.5 h-3.5" />
+                            <span className="font-medium">Holiday Card/Party Invite</span>
+                          </label>
                         </div>
                       </div>
                       <div className="flex gap-1 sm:gap-2 flex-shrink-0">
