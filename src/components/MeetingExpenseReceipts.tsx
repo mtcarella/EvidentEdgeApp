@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import {
   Download, Trash2, Pencil, Upload, StickyNote, FileText, FileSpreadsheet,
-  Image as ImageIcon, File as FileIcon, DollarSign, Check, X, Loader,
+  Image as ImageIcon, File as FileIcon, DollarSign, Check, X, Loader, PlusCircle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useDialog } from '../contexts/DialogContext';
 import { adjustBudget, getBudgetTypeForContact } from '../lib/budgetUtils';
 import { formatTimestampForDisplay } from '../lib/dateUtils';
-import { formatFileSize, buildReceiptFilename } from './ExpenseListEditor';
+import { formatFileSize, buildReceiptFilename, validateReceiptFile } from './ExpenseListEditor';
 
 export interface MeetingExpense {
   id: string;
@@ -62,6 +62,7 @@ interface MeetingExpenseReceiptsProps {
   expenses: MeetingExpense[];
   canEdit: boolean;
   currentUserId?: string;
+  otherReceiptsTotal?: number;
   onChanged: () => void;
 }
 
@@ -75,6 +76,7 @@ export function MeetingExpenseReceipts({
   expenses,
   canEdit,
   currentUserId,
+  otherReceiptsTotal = 0,
   onChanged,
 }: MeetingExpenseReceiptsProps) {
   const dialog = useDialog();
@@ -85,6 +87,12 @@ export function MeetingExpenseReceipts({
   const [detailsDraft, setDetailsDraft] = useState({ amount: '', category: '', description: '' });
   const [notesId, setNotesId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [newFile, setNewFile] = useState<File | null>(null);
+  const [newFileError, setNewFileError] = useState<string | null>(null);
+  const [newAmount, setNewAmount] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,14 +112,32 @@ export function MeetingExpenseReceipts({
 
   const budgetType = getBudgetTypeForContact(contactName);
 
-  const syncTotal = async (nextTotal: number) => {
+  const syncTotal = async (expensesTotal: number) => {
+    const nextTotal = expensesTotal + otherReceiptsTotal;
     const oldTotal = meetingExpenseAmount ?? 0;
-    await supabase
+    const { data: meetingRow } = await supabase
       .from('meetings')
-      .update({ expense_amount: nextTotal > 0 ? nextTotal : null })
-      .eq('id', meetingId);
+      .select('meeting_group_id')
+      .eq('id', meetingId)
+      .maybeSingle();
+    const groupId = meetingRow?.meeting_group_id as string | null | undefined;
+    const update = supabase
+      .from('meetings')
+      .update({ expense_amount: nextTotal > 0 ? nextTotal : null });
+    const { error } = groupId
+      ? await update.eq('meeting_group_id', groupId)
+      : await update.eq('id', meetingId);
+    if (error) {
+      await dialog.alert('Receipt saved, but the meeting total could not be updated.');
+      return;
+    }
     if (nextTotal !== oldTotal) {
-      await adjustBudget(salespersonId, oldTotal, nextTotal, budgetType, meetingId);
+      const result = await adjustBudget(salespersonId, oldTotal, nextTotal, budgetType, meetingId);
+      if (!result.success) {
+        await dialog.alert('Receipt saved, but the budget could not be updated. Please contact an administrator.');
+      } else if (result.exceeded && result.newBalance !== null) {
+        await dialog.alert(`This receipt puts the budget over its limit. Current balance: ${result.newBalance.toFixed(2)}`);
+      }
     }
   };
 
@@ -274,8 +300,148 @@ export function MeetingExpenseReceipts({
     }
   };
 
+  const resetAdd = () => {
+    setShowAdd(false);
+    setNewFile(null);
+    setNewFileError(null);
+    setNewAmount('');
+    setNewDescription('');
+  };
+
+  const parsedNewAmount = parseFloat(newAmount);
+  const canAdd = !!newFile && !newFileError && !Number.isNaN(parsedNewAmount) && parsedNewAmount > 0;
+
+  const addReceipt = async () => {
+    if (!canAdd || !newFile || !currentUserId) return;
+    setAdding(true);
+    try {
+      const description = newDescription.trim();
+      const renamed = buildReceiptFilename(
+        { date: meetingDate, username, contactName, description },
+        newFile.name,
+      );
+      const path = `${meetingId}/${crypto.randomUUID()}/${renamed}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('receipts')
+        .upload(path, newFile, { contentType: newFile.type, upsert: false });
+      if (uploadErr) {
+        await dialog.alert('Failed to upload the receipt file. Please try again.');
+        return;
+      }
+      const { error } = await supabase.from('meeting_expenses').insert({
+        meeting_id: meetingId,
+        description: description || null,
+        amount: parsedNewAmount,
+        created_by: currentUserId,
+        receipt_path: path,
+        receipt_name: renamed,
+        receipt_original_name: newFile.name,
+        receipt_size: newFile.size,
+        receipt_type: newFile.type,
+        receipt_uploaded_at: new Date().toISOString(),
+      });
+      if (error) {
+        await supabase.storage.from('receipts').remove([path]);
+        await dialog.alert('Failed to save the receipt. Please try again.');
+        return;
+      }
+      const nextTotal = expenses.reduce((sum, x) => sum + (x.amount ?? 0), 0) + parsedNewAmount;
+      await syncTotal(nextTotal);
+      resetAdd();
+      onChanged();
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const addSection = canEdit && (
+    showAdd ? (
+      <div className="rounded-lg border border-green-300 bg-green-50 p-3 space-y-2">
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">
+            <Upload className="w-3.5 h-3.5 inline mr-1" />
+            Receipt File <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+            onChange={(ev) => {
+              const f = ev.target.files?.[0] ?? null;
+              setNewFile(f);
+              setNewFileError(f ? validateReceiptFile(f) : null);
+            }}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white"
+          />
+          {newFileError && <p className="mt-1 text-xs text-red-600">{newFileError}</p>}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
+              Amount <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={newAmount}
+                onChange={(ev) => setNewAmount(ev.target.value)}
+                placeholder="0.00"
+                className="w-full pl-5 pr-2 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Description</label>
+            <input
+              type="text"
+              value={newDescription}
+              onChange={(ev) => setNewDescription(ev.target.value)}
+              placeholder="e.g. Lunch"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={addReceipt}
+            disabled={!canAdd || adding}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {adding ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {adding ? 'Saving...' : 'Save Receipt'}
+          </button>
+          <button
+            type="button"
+            onClick={resetAdd}
+            disabled={adding}
+            className="flex items-center gap-1 text-sm px-3 py-1.5 bg-white text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            <X className="w-4 h-4" /> Cancel
+          </button>
+        </div>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setShowAdd(true)}
+        className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors"
+      >
+        <PlusCircle className="w-4 h-4" />
+        Add Receipt
+      </button>
+    )
+  );
+
   if (expenses.length === 0) {
-    return <p className="text-sm text-yellow-700 italic">No receipts uploaded</p>;
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-yellow-700 italic">No receipts uploaded</p>
+        {addSection}
+      </div>
+    );
   }
 
   return (
@@ -513,6 +679,7 @@ export function MeetingExpenseReceipts({
           );
         })}
       </ul>
+      {addSection}
     </div>
   );
 }

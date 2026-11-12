@@ -85,7 +85,7 @@ export function expensesValid(expenses: ExpenseDraft[]): boolean {
   return expenses.every(expenseIsValid);
 }
 
-function validateReceiptFile(file: File): string | null {
+export function validateReceiptFile(file: File): string | null {
   const ext = getFileExtension(file.name);
   const typeOk = ALLOWED_RECEIPT_TYPES.includes(file.type) || ALLOWED_RECEIPT_EXTENSIONS.includes(ext);
   if (!typeOk) return 'Unsupported file type. Use JPG, PNG, or PDF.';

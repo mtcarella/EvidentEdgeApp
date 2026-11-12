@@ -1,12 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, Upload, DollarSign, FileArchive, Eye, Image, ChevronDown, ChevronRight, AlertTriangle, FileText } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, DollarSign, FileArchive, Eye, ChevronDown, ChevronRight, AlertTriangle, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { formatDateForDisplay, formatTimestampForDisplay, getTodayDateString, getESTToday, formatDateWithWeekday, formatDateShort } from '../lib/dateUtils';
-import { convertToJpeg, isImageFile } from '../lib/imageUtils';
 import { adjustBudget, restoreBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
 import { MeetingExpenseReceipts, type MeetingExpense } from './MeetingExpenseReceipts';
 import { buildReceiptFilename, formatDateForFilename } from './ExpenseListEditor';
@@ -15,8 +14,15 @@ interface MeetingReceipt {
   id: string;
   file_path: string;
   file_name: string | null;
+  amount: number | null;
   created_at: string;
   created_by: string | null;
+}
+
+const EXPENSE_COLUMNS = 'id, description, amount, category, notes, receipt_path, receipt_name, receipt_original_name, receipt_size, receipt_type, receipt_uploaded_at, created_at, created_by';
+
+function legacyReceiptsTotal(receipts: MeetingReceipt[] | undefined): number {
+  return (receipts || []).reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
 }
 
 interface MeetingLog {
@@ -77,7 +83,6 @@ export function MeetingLogsReport() {
     has_expense: false,
     expense_payment_method: '',
     expense_amount: '',
-    receipt_files: [] as File[],
   });
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   const [previewReceiptFilename, setPreviewReceiptFilename] = useState<string | null>(null);
@@ -88,9 +93,6 @@ export function MeetingLogsReport() {
   const [receiptThumbnails, setReceiptThumbnails] = useState<Record<string, string>>({});
   const [deletingReceiptId, setDeletingReceiptId] = useState<string | null>(null);
   const [confirmDeleteReceiptId, setConfirmDeleteReceiptId] = useState<string | null>(null);
-  const [isDraggingReceipt, setIsDraggingReceipt] = useState(false);
-  const [uploadingReceipts, setUploadingReceipts] = useState(false);
-  const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const closePreviewModal = () => {
     if (previewReceiptUrl) {
@@ -150,8 +152,8 @@ export function MeetingLogsReport() {
           expense_payment_method,
           expense_amount,
           receipt_url,
-          receipts:meeting_receipts(id, file_path, file_name, created_at, created_by),
-          expenses:meeting_expenses(id, description, amount, category, notes, receipt_path, receipt_name, receipt_original_name, receipt_size, receipt_type, receipt_uploaded_at, created_at, created_by),
+          receipts:meeting_receipts(id, file_path, file_name, amount, created_at, created_by),
+          expenses:meeting_expenses(${EXPENSE_COLUMNS}),
           meeting_group_id,
           is_primary_for_expense,
           contact:contacts(name, type, company, email, phone),
@@ -203,7 +205,6 @@ export function MeetingLogsReport() {
       has_expense: meeting.has_expense || false,
       expense_payment_method: meeting.expense_payment_method || '',
       expense_amount: meeting.expense_amount ? meeting.expense_amount.toString() : '',
-      receipt_files: [],
     });
     setEditExistingReceipts(meeting.receipts || []);
     setConfirmDeleteReceiptId(null);
@@ -245,97 +246,28 @@ export function MeetingLogsReport() {
     }
   };
 
-  const handleDropReceipts = useCallback(async (files: File[]) => {
-    if (!editingMeeting || !salesPerson || files.length === 0) return;
-    setUploadingReceipts(true);
-    try {
-      const newReceipts: MeetingReceipt[] = [];
-      for (const file of files) {
-        let uploadFile = file;
-        let fileName = file.name;
-        if (isImageFile(file.name) && !file.name.toLowerCase().endsWith('.pdf')) {
-          const converted = await convertToJpeg(file);
-          if (converted) {
-            uploadFile = converted;
-            fileName = file.name.replace(/\.[^.]+$/, '.jpeg');
-          }
-        }
-        const storageName = `${salesPerson.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileName.split('.').pop()}`;
-        const { error: uploadError } = await supabase.storage
-          .from('receipts')
-          .upload(storageName, uploadFile);
-        if (uploadError) {
-          console.error('Upload error:', uploadError);
-          continue;
-        }
-        const { data: inserted, error: insertError } = await supabase
-          .from('meeting_receipts')
-          .insert({
-            meeting_id: editingMeeting.id,
-            file_path: storageName,
-            file_name: fileName,
-            created_by: salesPerson.user_id,
-          })
-          .select('id, file_path, file_name, created_at, created_by')
-          .maybeSingle();
-        if (!insertError && inserted) {
-          newReceipts.push(inserted);
-        }
-      }
-      if (newReceipts.length > 0) {
-        setEditExistingReceipts(prev => [...prev, ...newReceipts]);
-        loadReceiptThumbnails(newReceipts);
-      }
-    } catch (err) {
-      console.error('Error uploading receipts:', err);
-    } finally {
-      setUploadingReceipts(false);
+  const refreshEditingMeeting = async (meetingId: string) => {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select(`expense_amount, expenses:meeting_expenses(${EXPENSE_COLUMNS})`)
+      .eq('id', meetingId)
+      .maybeSingle();
+    if (error || !data) {
+      await dialog.alert('Could not refresh receipts. Please reopen this meeting.');
+      return;
     }
-  }, [editingMeeting, salesPerson]);
+    setEditingMeeting(prev => prev && prev.id === meetingId
+      ? { ...prev, expense_amount: data.expense_amount ?? undefined, expenses: (data.expenses || []) as MeetingExpense[] }
+      : prev);
+    setEditFormData(prev => ({ ...prev, expense_amount: data.expense_amount ? data.expense_amount.toString() : '' }));
+    loadMeetings();
+  };
 
   const handleEditSave = async () => {
     if (!editingMeeting || !salesPerson) return;
     if (editFormData.has_expense && !editFormData.expense_payment_method) return;
 
     try {
-      let receiptUrl = editingMeeting.receipt_url || null;
-      const uploadedReceipts: { filePath: string; fileName: string }[] = [];
-
-      if (editFormData.receipt_files.length > 0) {
-        for (const receiptFile of editFormData.receipt_files) {
-          let fileToUpload = receiptFile;
-          const fileExtension = '.' + receiptFile.name.split('.').pop()?.toLowerCase();
-          const isImage = receiptFile.type.startsWith('image/');
-
-          if (isImage) {
-            if (isImageFile(receiptFile)) {
-              try {
-                fileToUpload = await convertToJpeg(receiptFile);
-              } catch (error) {
-                console.error('Failed to convert image to JPEG:', error);
-                throw error instanceof Error ? error : new Error('Failed to process receipt image. Please try again.');
-              }
-            } else {
-              throw new Error(`RAW image format ${fileExtension.toUpperCase()} is not supported. Please convert to JPG, PNG, or another standard format first.`);
-            }
-          }
-
-          const fileName = `${salesPerson.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpeg`;
-          const filePath = `${fileName}`;
-
-          const { error: uploadError } = await supabase.storage
-            .from('receipts')
-            .upload(filePath, fileToUpload);
-
-          if (uploadError) throw uploadError;
-          uploadedReceipts.push({ filePath, fileName: receiptFile.name });
-        }
-
-        if (!receiptUrl && uploadedReceipts.length > 0) {
-          receiptUrl = uploadedReceipts[0].filePath;
-        }
-      }
-
       const { error } = await supabase
         .from('meetings')
         .update({
@@ -348,7 +280,7 @@ export function MeetingLogsReport() {
           has_expense: editFormData.has_expense,
           expense_payment_method: editFormData.has_expense ? editFormData.expense_payment_method : null,
           expense_amount: editFormData.has_expense && editFormData.expense_amount ? parseFloat(editFormData.expense_amount) : null,
-          receipt_url: editFormData.has_expense ? receiptUrl : null,
+          receipt_url: editFormData.has_expense ? (editingMeeting.receipt_url || null) : null,
         })
         .eq('id', editingMeeting.id);
 
@@ -358,29 +290,14 @@ export function MeetingLogsReport() {
         return;
       }
 
-      if (uploadedReceipts.length > 0 && editFormData.has_expense) {
-        const receiptsToInsert = uploadedReceipts.map(receipt => ({
-          meeting_id: editingMeeting.id,
-          file_path: receipt.filePath,
-          file_name: receipt.fileName,
-          created_by: salesPerson.user_id,
-        }));
-
-        const { error: receiptsError } = await supabase
-          .from('meeting_receipts')
-          .insert(receiptsToInsert);
-
-        if (receiptsError) {
-          console.error('Error saving receipt records:', receiptsError);
-        }
-      }
-
-      const oldExpenseAmount = (editingMeeting.has_expense && editingMeeting.expense_amount) ? editingMeeting.expense_amount : 0;
+      const oldExpenseAmount = editingMeeting.expense_amount ?? 0;
       const newExpenseAmount = (editFormData.has_expense && editFormData.expense_amount) ? parseFloat(editFormData.expense_amount) : 0;
       if (oldExpenseAmount !== newExpenseAmount) {
         const budgetType = getBudgetTypeForContact(editingMeeting.contact?.name);
         const result = await adjustBudget(editingMeeting.salesperson_id, oldExpenseAmount, newExpenseAmount, budgetType, editingMeeting.id);
-        if (result.exceeded && result.newBalance !== null) {
+        if (!result.success) {
+          await dialog.alert(`The meeting was updated, but the ${getBudgetLabel(budgetType)} could not be adjusted. Please try again or adjust it from Budget Management.`, { title: 'Budget not updated' });
+        } else if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: ${getBudgetLabel(budgetType)} exceeded. Current balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
@@ -400,7 +317,7 @@ export function MeetingLogsReport() {
     }
 
     try {
-      const expenseToRestore = (meeting.has_expense && meeting.expense_amount) ? meeting.expense_amount : 0;
+      const expenseToRestore = (meeting.has_expense && meeting.expense_amount && meeting.is_primary_for_expense !== false) ? meeting.expense_amount : 0;
 
       const { error } = await supabase
         .from('meetings')
@@ -414,7 +331,16 @@ export function MeetingLogsReport() {
       }
 
       if (expenseToRestore > 0) {
-        await restoreBudget(meeting.salesperson_id, expenseToRestore, getBudgetTypeForContact(meeting.contact?.name), '', meeting.id);
+        // Meeting row is gone, so the refund can't reference it
+        const restored = await restoreBudget(
+          meeting.salesperson_id,
+          expenseToRestore,
+          getBudgetTypeForContact(meeting.contact?.name),
+          `Meeting deleted: ${meeting.contact?.name ?? 'contact'} (${meeting.meeting_date})`,
+        );
+        if (!restored.success) {
+          await dialog.alert(`The meeting was deleted, but the ${formatCurrency(expenseToRestore)} expense could not be returned to the budget. Please adjust it from Budget Management.`, { title: 'Budget not updated' });
+        }
       }
 
       loadMeetings();
@@ -491,8 +417,15 @@ export function MeetingLogsReport() {
       if (meeting.is_call) meetingTypes.push('Call');
       if (meeting.is_email) meetingTypes.push('Email');
 
-      // Only show expense data for primary meetings (to avoid duplicates in grouped meetings)
-      const showExpense = meeting.is_primary_for_expense !== false;
+      const itemized = meeting.expenses || [];
+      const legacy = meeting.receipts || [];
+      // Grouped meetings repeat the expense on every row; show it once unless this row holds its own receipts
+      const showExpense = meeting.is_primary_for_expense !== false || itemized.length > 0 || legacy.length > 0;
+      const receiptCount = itemized.filter(e => e.receipt_path).length + legacy.length + (legacy.length === 0 && meeting.receipt_url ? 1 : 0);
+      const receiptDetails = [
+        ...itemized.map(e => `${e.description || 'Receipt'}: ${Number(e.amount ?? 0).toFixed(2)}${e.receipt_path ? '' : ' (no file)'}`),
+        ...legacy.map(r => `${r.file_name || 'Receipt'}${r.amount != null ? `: ${Number(r.amount).toFixed(2)}` : ''}`),
+      ].join('; ');
 
       return {
         'Meeting Date': formatDateShort(meeting.meeting_date),
@@ -500,7 +433,9 @@ export function MeetingLogsReport() {
         'Has Expense': showExpense && meeting.has_expense ? 'Yes' : 'No',
         'Payment Method': showExpense && meeting.expense_payment_method ? (meeting.expense_payment_method === 'personal' ? 'Personal' : 'Company') : '',
         'Expense Amount': showExpense && meeting.expense_amount ? parseFloat(meeting.expense_amount.toString()) : '',
-        'Receipt Included': showExpense && meeting.receipt_url ? 'Yes' : 'No',
+        'Receipt Included': showExpense && receiptCount > 0 ? 'Yes' : 'No',
+        'Receipt Count': showExpense ? receiptCount : 0,
+        'Receipts': showExpense ? receiptDetails : '',
         'Salesperson': meeting.salesperson.name,
         'Contact Name': meeting.contact.name,
         'Contact Type': meeting.contact.type,
@@ -522,12 +457,9 @@ export function MeetingLogsReport() {
 
   const exportReceipts = async () => {
     const meetingsWithReceipts = filteredMeetings.filter(m =>
-      m.is_primary_for_expense !== false &&
-      (
-        (m.expenses && m.expenses.some(e => e.receipt_path)) ||
-        (m.receipts && m.receipts.length > 0) ||
-        m.receipt_url
-      )
+      (m.expenses && m.expenses.some(e => e.receipt_path)) ||
+      (m.receipts && m.receipts.length > 0) ||
+      (m.is_primary_for_expense !== false && m.receipt_url)
     );
 
     if (meetingsWithReceipts.length === 0) {
@@ -1059,6 +991,7 @@ export function MeetingLogsReport() {
                             expenses={meeting.expenses || []}
                             canEdit={canEditMeeting(meeting)}
                             currentUserId={salesPerson?.user_id}
+                            otherReceiptsTotal={legacyReceiptsTotal(meeting.receipts)}
                             onChanged={loadMeetings}
                           />
                         </div>
@@ -1221,9 +1154,13 @@ export function MeetingLogsReport() {
                           min="0"
                           value={editFormData.expense_amount}
                           onChange={(e) => setEditFormData({ ...editFormData, expense_amount: e.target.value })}
+                          readOnly={(editingMeeting.expenses?.length ?? 0) > 0 || editExistingReceipts.length > 0}
                           placeholder="0.00"
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent read-only:bg-slate-100 read-only:text-slate-600"
                         />
+                        {((editingMeeting.expenses?.length ?? 0) > 0 || editExistingReceipts.length > 0) && (
+                          <p className="mt-1 text-xs text-slate-500">Total is calculated from the receipts below.</p>
+                        )}
                       </div>
                       {/* Receipts Management Section */}
                       <div className="border-t border-slate-200 pt-3">
@@ -1292,79 +1229,19 @@ export function MeetingLogsReport() {
                           </div>
                         )}
 
-                        {/* Drag-and-Drop Upload Area */}
-                        <div
-                          ref={dropZoneRef}
-                          onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingReceipt(true); }}
-                          onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDraggingReceipt(false); }}
-                          onDrop={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setIsDraggingReceipt(false);
-                            const files = Array.from(e.dataTransfer.files).filter(
-                              f => f.type.startsWith('image/') || f.type === 'application/pdf'
-                            );
-                            if (files.length > 0) handleDropReceipts(files);
-                          }}
-                          className={`relative border-2 border-dashed rounded-lg p-4 text-center transition-colors cursor-pointer ${
-                            isDraggingReceipt
-                              ? 'border-blue-400 bg-blue-50'
-                              : 'border-slate-300 hover:border-slate-400 hover:bg-slate-50'
-                          }`}
-                        >
-                          {uploadingReceipts ? (
-                            <div className="flex items-center justify-center gap-2 py-2">
-                              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                              <span className="text-sm text-slate-600">Uploading...</span>
-                            </div>
-                          ) : (
-                            <>
-                              <Upload className="w-5 h-5 text-slate-400 mx-auto mb-1" />
-                              <p className="text-sm text-slate-600">
-                                Drag and drop receipts here
-                              </p>
-                              <p className="text-xs text-slate-400 mt-0.5">or click to browse</p>
-                              <input
-                                type="file"
-                                accept="image/*,.pdf"
-                                multiple
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                onChange={(e) => {
-                                  const files = e.target.files;
-                                  if (files && files.length > 0) {
-                                    handleDropReceipts(Array.from(files));
-                                  }
-                                  e.target.value = '';
-                                }}
-                              />
-                            </>
-                          )}
-                        </div>
-
-                        {/* Pending files from old-style input (kept for compatibility) */}
-                        {editFormData.receipt_files.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            <p className="text-xs text-slate-600 font-medium">{editFormData.receipt_files.length} pending file(s):</p>
-                            {editFormData.receipt_files.map((file, index) => (
-                              <div key={index} className="flex items-center justify-between bg-yellow-50 px-2 py-1 rounded text-sm">
-                                <span className="flex items-center gap-1 text-slate-700 truncate">
-                                  <Image className="w-3 h-3 flex-shrink-0" />
-                                  {file.name}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditFormData(prev => ({
-                                    ...prev,
-                                    receipt_files: prev.receipt_files.filter((_, i) => i !== index)
-                                  }))}
-                                  className="text-red-500 hover:text-red-700 p-1"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        <MeetingExpenseReceipts
+                          meetingId={editingMeeting.id}
+                          meetingDate={editingMeeting.meeting_date}
+                          meetingExpenseAmount={editingMeeting.expense_amount ?? null}
+                          salespersonId={editingMeeting.salesperson_id}
+                          contactName={editingMeeting.contact?.name ?? ''}
+                          username={editingMeeting.salesperson?.name ?? ''}
+                          expenses={editingMeeting.expenses || []}
+                          canEdit={canEditMeeting(editingMeeting)}
+                          currentUserId={salesPerson?.user_id}
+                          otherReceiptsTotal={legacyReceiptsTotal(editExistingReceipts)}
+                          onChanged={() => refreshEditingMeeting(editingMeeting.id)}
+                        />
                       </div>
                     </div>
                   </div>

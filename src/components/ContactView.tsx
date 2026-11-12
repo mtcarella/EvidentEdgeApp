@@ -4,11 +4,10 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 import { formatDateShort, formatDateWithWeekday, getTodayDateString } from '../lib/dateUtils';
-import { convertToJpeg, isImageFile } from '../lib/imageUtils';
-import { deductBudget, restoreBudget, adjustBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
-import { ReceiptListEditor, ReceiptItem, receiptsTotal, receiptsValid } from './ReceiptListEditor';
+import { deductBudget, findPriorExpensesWithAmount, restoreBudget, adjustBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
 import { ExpenseListEditor, ExpenseDraft, expensesValid, expensesTotal, buildReceiptFilename } from './ExpenseListEditor';
 import { MeetingExpenseTracker } from './MeetingExpenseTracker';
+import { MeetingExpenseReceipts, type MeetingExpense } from './MeetingExpenseReceipts';
 
 interface MeetingReceipt {
   id: string;
@@ -60,11 +59,21 @@ interface Meeting {
   has_expense?: boolean;
   expense_payment_method?: string;
   expense_amount?: number;
+  is_primary_for_expense?: boolean;
   receipt_url?: string;
   receipts?: MeetingReceipt[];
+  expenses?: MeetingExpense[];
   sales_people?: {
     name: string;
   };
+}
+
+const MEETING_SELECT = '*, sales_people(name), receipts:meeting_receipts(id, file_path, file_name, amount, created_at), expenses:meeting_expenses(id, description, amount, category, notes, receipt_path, receipt_name, receipt_original_name, receipt_size, receipt_type, receipt_uploaded_at, created_at, created_by)';
+
+const EMPTY_EDIT_FORM = { date: '', notes: '', is_meeting: false, is_text: false, is_call: false, is_email: false, has_expense: false, expense_payment_method: '' };
+
+function legacyReceiptsTotal(receipts: MeetingReceipt[] | undefined): number {
+  return (receipts || []).reduce((sum, r) => sum + Number(r.amount ?? 0), 0);
 }
 
 interface ContactViewProps {
@@ -98,7 +107,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
   const [addExpenses, setAddExpenses] = useState<ExpenseDraft[]>([]);
   const [savingMeeting, setSavingMeeting] = useState(false);
   const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
-  const [editMeetingForm, setEditMeetingForm] = useState<{ date: string; notes: string; is_meeting: boolean; is_text: boolean; is_call: boolean; is_email: boolean; has_expense: boolean; expense_payment_method: string; receipts: ReceiptItem[] }>({ date: '', notes: '', is_meeting: false, is_text: false, is_call: false, is_email: false, has_expense: false, expense_payment_method: '', receipts: [] });
+  const [editMeetingForm, setEditMeetingForm] = useState<{ date: string; notes: string; is_meeting: boolean; is_text: boolean; is_call: boolean; is_email: boolean; has_expense: boolean; expense_payment_method: string }>(EMPTY_EDIT_FORM);
   const [isOwnContact, setIsOwnContact] = useState(false);
   const [additionalContacts, setAdditionalContacts] = useState<Set<string>>(new Set());
   const [userContacts, setUserContacts] = useState<Array<{ id: string; name: string; type: string }>>([]);
@@ -164,7 +173,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       const { data: meetingsData, error: meetingsError } = await supabase
         .from('meetings')
-        .select('*, sales_people(name), receipts:meeting_receipts(id, file_path, file_name, amount, created_at)')
+        .select(MEETING_SELECT)
         .eq('contact_id', contactId)
         .order('meeting_date', { ascending: false });
 
@@ -177,33 +186,17 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
     }
   };
 
-  const uploadReceiptFile = async (file: File): Promise<{ filePath: string; fileName: string }> => {
-    let fileToUpload = file;
-    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
-    const isImage = file.type.startsWith('image/');
-
-    if (isImage) {
-      if (isImageFile(file)) {
-        try {
-          fileToUpload = await convertToJpeg(file);
-        } catch (error) {
-          console.error('Failed to convert image to JPEG:', error);
-          throw error instanceof Error ? error : new Error('Failed to process receipt image. Please try again.');
-        }
-      } else {
-        throw new Error(`RAW image format ${fileExtension.toUpperCase()} is not supported. Please convert to JPG, PNG, or another standard format first.`);
-      }
+  const refreshMeeting = async (meetingId: string) => {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select(MEETING_SELECT)
+      .eq('id', meetingId)
+      .maybeSingle();
+    if (error || !data) {
+      await dialog.alert('Could not refresh receipts. Please reload this contact.');
+      return;
     }
-
-    const fileName = `${salesPerson?.user_id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpeg`;
-    const filePath = `${fileName}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('receipts')
-      .upload(filePath, fileToUpload);
-
-    if (uploadError) throw uploadError;
-    return { filePath, fileName: file.name };
+    setMeetings(prev => prev.map(m => (m.id === meetingId ? (data as Meeting) : m)));
   };
 
   const handleAddMeeting = async (e: React.FormEvent) => {
@@ -211,6 +204,22 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
     if (!salesPerson?.id || !meetingNotes.trim() || hasExpense === null) return;
     if (hasExpense && !expensePaymentMethod) return;
     if (!expensesValid(addExpenses)) return;
+
+    if (hasExpense) {
+      const total = expensesTotal(addExpenses);
+      const matches = total > 0 ? await findPriorExpensesWithAmount(salesPerson.id, total) : [];
+      if (matches.length > 0) {
+        const list = matches
+          .slice(0, 3)
+          .map(m => `${formatDateShort(m.meetingDate)}${m.contactName ? ` (${m.contactName})` : ''}`)
+          .join(', ');
+        const proceed = await dialog.confirm(
+          `You already logged an expense of ${formatCurrency(total)} on ${list}. Is this a different expense? Saving will deduct ${formatCurrency(total)} from your budget again.`,
+          { title: 'Possible duplicate expense', confirmLabel: 'Yes, save it', cancelLabel: 'Go back' }
+        );
+        if (!proceed) return;
+      }
+    }
 
     setSavingMeeting(true);
     try {
@@ -299,7 +308,9 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
       if (hasExpense && expenseTotal > 0) {
         const budgetType = getBudgetTypeForContact(contact?.name);
         const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, '', primaryMeetingId);
-        if (result.exceeded && result.newBalance !== null) {
+        if (!result.success) {
+          await dialog.alert(`Your meeting was saved, but the ${formatCurrency(expenseTotal)} expense could not be charged to your ${getBudgetLabel(budgetType)}. Please contact an administrator so it can be applied.`, { title: 'Budget not updated' });
+        } else if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
@@ -329,14 +340,6 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
   const handleEditMeeting = (meeting: Meeting) => {
     setEditingMeetingId(meeting.id);
-    const existingReceipts: ReceiptItem[] = (meeting.receipts || []).map((r) => ({
-      key: r.id,
-      existingId: r.id,
-      file: null,
-      fileName: r.file_name || 'Receipt',
-      filePath: r.file_path,
-      amount: r.amount != null ? r.amount.toString() : '',
-    }));
     setEditMeetingForm({
       date: meeting.meeting_date,
       notes: meeting.notes,
@@ -346,74 +349,15 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
       is_email: meeting.is_email || false,
       has_expense: meeting.has_expense || false,
       expense_payment_method: meeting.expense_payment_method || '',
-      receipts: existingReceipts,
     });
   };
 
   const handleSaveMeeting = async (meetingId: string) => {
     if (!salesPerson) return;
-    if (editMeetingForm.has_expense && !receiptsValid(editMeetingForm.receipts)) return;
     try {
       const meeting = meetings.find(m => m.id === meetingId);
-      const oldExpenseAmount = (meeting?.has_expense && meeting?.expense_amount) ? meeting.expense_amount : 0;
-      const newExpenseAmount = editMeetingForm.has_expense ? receiptsTotal(editMeetingForm.receipts) : 0;
-
-      if (editMeetingForm.has_expense) {
-        const existingIds = new Set(
-          editMeetingForm.receipts.filter(r => r.existingId).map(r => r.existingId as string)
-        );
-        const removed = (meeting?.receipts || []).filter(r => !existingIds.has(r.id));
-        if (removed.length > 0) {
-          await supabase
-            .from('meeting_receipts')
-            .delete()
-            .in('id', removed.map(r => r.id));
-        }
-
-        for (const receipt of editMeetingForm.receipts) {
-          if (receipt.existingId) {
-            if (receipt.file) {
-              const uploaded = await uploadReceiptFile(receipt.file);
-              await supabase
-                .from('meeting_receipts')
-                .update({
-                  file_path: uploaded.filePath,
-                  file_name: uploaded.fileName,
-                  amount: parseFloat(receipt.amount) || 0,
-                })
-                .eq('id', receipt.existingId);
-            } else {
-              await supabase
-                .from('meeting_receipts')
-                .update({ amount: parseFloat(receipt.amount) || 0 })
-                .eq('id', receipt.existingId);
-            }
-          } else if (receipt.file) {
-            const uploaded = await uploadReceiptFile(receipt.file);
-            await supabase
-              .from('meeting_receipts')
-              .insert({
-                meeting_id: meetingId,
-                file_path: uploaded.filePath,
-                file_name: uploaded.fileName,
-                amount: parseFloat(receipt.amount) || 0,
-                created_by: salesPerson.user_id,
-              });
-          }
-        }
-      } else {
-        const existing = meeting?.receipts || [];
-        if (existing.length > 0) {
-          await supabase
-            .from('meeting_receipts')
-            .delete()
-            .in('id', existing.map(r => r.id));
-        }
-      }
-
-      const firstReceiptPath = editMeetingForm.has_expense
-        ? (editMeetingForm.receipts.find(r => r.filePath)?.filePath ?? null)
-        : null;
+      const oldExpenseAmount = meeting?.expense_amount ?? 0;
+      const newExpenseAmount = editMeetingForm.has_expense ? oldExpenseAmount : 0;
 
       const { error } = await supabase
         .from('meetings')
@@ -427,7 +371,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
           has_expense: editMeetingForm.has_expense,
           expense_payment_method: editMeetingForm.has_expense ? editMeetingForm.expense_payment_method : null,
           expense_amount: editMeetingForm.has_expense ? newExpenseAmount : null,
-          receipt_url: editMeetingForm.has_expense ? (meeting?.receipt_url ?? firstReceiptPath) : null,
+          receipt_url: editMeetingForm.has_expense ? (meeting?.receipt_url ?? null) : null,
         })
         .eq('id', meetingId);
 
@@ -435,15 +379,17 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       if (oldExpenseAmount !== newExpenseAmount) {
         const budgetType = getBudgetTypeForContact(contact?.name);
-        const result = await adjustBudget(salesPerson.id, oldExpenseAmount, newExpenseAmount, budgetType, meetingId);
-        if (result.exceeded && result.newBalance !== null) {
+        const result = await adjustBudget(meeting?.salesperson_id ?? salesPerson.id, oldExpenseAmount, newExpenseAmount, budgetType, meetingId);
+        if (!result.success) {
+          await dialog.alert(`Your changes were saved, but the ${getBudgetLabel(budgetType)} could not be updated. Please contact an administrator.`, { title: 'Budget not updated' });
+        } else if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
       }
 
       setEditingMeetingId(null);
-      setEditMeetingForm({ date: '', notes: '', is_meeting: false, is_text: false, is_call: false, is_email: false, has_expense: false, expense_payment_method: '', receipts: [] });
+      setEditMeetingForm(EMPTY_EDIT_FORM);
       loadContactData();
     } catch (error: any) {
       console.error('Error updating meeting:', error);
@@ -458,7 +404,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
     try {
       const meeting = meetings.find(m => m.id === meetingId);
-      const expenseToRestore = (meeting?.has_expense && meeting?.expense_amount) ? meeting.expense_amount : 0;
+      const expenseToRestore = (meeting?.has_expense && meeting?.expense_amount && meeting.is_primary_for_expense !== false) ? meeting.expense_amount : 0;
 
       const { error } = await supabase
         .from('meetings')
@@ -467,8 +413,17 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
 
       if (error) throw error;
 
-      if (expenseToRestore > 0) {
-        await restoreBudget(salesPerson.id, expenseToRestore, getBudgetTypeForContact(contact?.name), '', meetingId);
+      if (expenseToRestore > 0 && meeting) {
+        // Meeting row is gone, so the refund can't reference it
+        const restored = await restoreBudget(
+          meeting.salesperson_id,
+          expenseToRestore,
+          getBudgetTypeForContact(contact?.name),
+          `Meeting deleted: ${contact?.name ?? 'contact'} (${meeting.meeting_date})`,
+        );
+        if (!restored.success) {
+          await dialog.alert(`The meeting was deleted, but the ${formatCurrency(expenseToRestore)} expense could not be returned to the budget. Please contact an administrator.`, { title: 'Budget not updated' });
+        }
       }
 
       loadContactData();
@@ -1109,7 +1064,6 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                                     ...editMeetingForm,
                                     has_expense: false,
                                     expense_payment_method: '',
-                                    receipts: []
                                   })}
                                   className="w-5 h-5 text-yellow-600 focus:ring-yellow-500"
                                 />
@@ -1150,10 +1104,34 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                                 </label>
                               </div>
                               <div className="mt-4">
-                                <ReceiptListEditor
-                                  receipts={editMeetingForm.receipts}
-                                  onChange={(next) => setEditMeetingForm(prev => ({ ...prev, receipts: next }))}
+                                {meeting.receipts && meeting.receipts.length > 0 && (
+                                  <div className="mb-3 space-y-1">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Earlier Receipts</p>
+                                    {meeting.receipts.map((receipt, index) => (
+                                      <div key={receipt.id} className="flex items-center justify-between gap-2 text-sm text-slate-700">
+                                        <span className="truncate">{receipt.file_name || `Receipt ${index + 1}`}</span>
+                                        <span className="font-semibold flex-shrink-0">${Number(receipt.amount ?? 0).toFixed(2)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                <MeetingExpenseReceipts
+                                  meetingId={meeting.id}
+                                  meetingDate={meeting.meeting_date}
+                                  meetingExpenseAmount={meeting.expense_amount ?? null}
+                                  salespersonId={meeting.salesperson_id}
+                                  contactName={contact.name}
+                                  username={meeting.sales_people?.name ?? ''}
+                                  expenses={meeting.expenses || []}
+                                  canEdit={isOwnContact || isAdminOrProcessor}
+                                  currentUserId={user?.id}
+                                  otherReceiptsTotal={legacyReceiptsTotal(meeting.receipts)}
+                                  onChanged={() => refreshMeeting(meeting.id)}
                                 />
+                                <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-200">
+                                  <span className="text-sm font-medium text-slate-600">Meeting Total</span>
+                                  <span className="text-lg font-bold text-slate-900">{formatCurrency(meeting.expense_amount ?? 0)}</span>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -1161,7 +1139,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleSaveMeeting(meeting.id)}
-                            disabled={editMeetingForm.has_expense && (!editMeetingForm.expense_payment_method || !receiptsValid(editMeetingForm.receipts))}
+                            disabled={editMeetingForm.has_expense && !editMeetingForm.expense_payment_method}
                             className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Save className="w-4 h-4" />
@@ -1170,7 +1148,7 @@ export function ContactView({ contactId, onClose }: ContactViewProps) {
                           <button
                             onClick={() => {
                               setEditingMeetingId(null);
-                              setEditMeetingForm({ date: '', notes: '', is_meeting: false, is_text: false, is_call: false, is_email: false, has_expense: false, expense_payment_method: '', receipts: [] });
+                              setEditMeetingForm(EMPTY_EDIT_FORM);
                             }}
                             className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition-colors"
                           >

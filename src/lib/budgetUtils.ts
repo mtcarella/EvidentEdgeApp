@@ -26,6 +26,33 @@ export function getBudgetLabel(budgetType: BudgetType): string {
   return labelFor(budgetType);
 }
 
+export interface PriorExpenseMatch {
+  meetingDate: string;
+  contactName: string | null;
+}
+
+export async function findPriorExpensesWithAmount(
+  salesPersonId: string,
+  amount: number
+): Promise<PriorExpenseMatch[]> {
+  const { data, error } = await supabase
+    .from('meetings')
+    .select('meeting_date, is_primary_for_expense, contact:contacts(name)')
+    .eq('salesperson_id', salesPersonId)
+    .eq('has_expense', true)
+    .eq('expense_amount', Math.round(amount * 100) / 100)
+    .order('meeting_date', { ascending: false })
+    .limit(10);
+
+  if (error || !data) return [];
+  return data
+    .filter((m: any) => m.is_primary_for_expense !== false)
+    .map((m: any) => {
+      const contact = Array.isArray(m.contact) ? m.contact[0] : m.contact;
+      return { meetingDate: m.meeting_date, contactName: contact?.name ?? null };
+    });
+}
+
 export async function deductBudget(
   salesPersonId: string,
   amount: number,
@@ -35,12 +62,15 @@ export async function deductBudget(
 ): Promise<BudgetDeductionResult> {
   const column = columnFor(budgetType);
   try {
-    const { data: user } = await supabase
+    const { data: user, error: readError } = await supabase
       .from('sales_people')
       .select(`budget, gas_budget, budget_display_enabled, name, email, user_id`)
       .eq('id', salesPersonId)
       .maybeSingle();
 
+    if (readError) {
+      return { success: false, newBalance: null, exceeded: false, budgetType, error: readError.message };
+    }
     if (!user || !user.budget_display_enabled) {
       return { success: true, newBalance: null, exceeded: false, budgetType };
     }
@@ -56,7 +86,7 @@ export async function deductBudget(
       return { success: false, newBalance: null, exceeded: false, budgetType, error: error.message };
     }
 
-    logBudgetTransaction(salesPersonId, user.user_id, amount, 'debit', budgetType, description, newBudget, meetingId);
+    await logBudgetTransaction(salesPersonId, user.user_id, amount, 'debit', budgetType, description, newBudget, meetingId);
 
     if (newBudget < 0) {
       notifyBudgetExceeded(user.name, user.email, newBudget, budgetType);
@@ -77,12 +107,15 @@ export async function restoreBudget(
 ): Promise<BudgetDeductionResult> {
   const column = columnFor(budgetType);
   try {
-    const { data: user } = await supabase
+    const { data: user, error: readError } = await supabase
       .from('sales_people')
       .select(`budget, gas_budget, budget_display_enabled, user_id`)
       .eq('id', salesPersonId)
       .maybeSingle();
 
+    if (readError) {
+      return { success: false, newBalance: null, exceeded: false, budgetType, error: readError.message };
+    }
     if (!user || !user.budget_display_enabled) {
       return { success: true, newBalance: null, exceeded: false, budgetType };
     }
@@ -98,7 +131,7 @@ export async function restoreBudget(
       return { success: false, newBalance: null, exceeded: false, budgetType, error: error.message };
     }
 
-    logBudgetTransaction(salesPersonId, user.user_id, amount, 'credit', budgetType, description || 'Budget restored', newBudget, meetingId);
+    await logBudgetTransaction(salesPersonId, user.user_id, amount, 'credit', budgetType, description || 'Budget restored', newBudget, meetingId);
 
     return { success: true, newBalance: newBudget, exceeded: newBudget < 0, budgetType };
   } catch (err: any) {

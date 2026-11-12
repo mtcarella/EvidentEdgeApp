@@ -3,6 +3,8 @@ import { History, ChevronDown, ChevronUp, Plus, Pencil, Trash2, User, Building2,
 import { supabase } from '../lib/supabase';
 import { getESTToday, formatTimestampForDisplay } from '../lib/dateUtils';
 
+const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
 interface AuditEntry {
   id: string;
   table_name: string;
@@ -344,6 +346,17 @@ export function AuditLog() {
     }
   };
 
+  const getBudgetChange = (entry: AuditEntry, field: string): number | null => {
+    if (entry.table_name !== 'sales_people' || !['budget', 'gas_budget'].includes(field)) return null;
+    const before = parseFloat(entry.old_data?.[field]);
+    const after = parseFloat(entry.new_data?.[field]);
+    if (isNaN(before) || isNaN(after)) return null;
+    return Math.round((after - before) * 100) / 100;
+  };
+
+  const describeBudgetChange = (diff: number): string =>
+    diff < 0 ? `Expense of ${currency.format(Math.abs(diff))}` : `Added ${currency.format(diff)}`;
+
   const getSummaryDescription = (entry: AuditEntry): string => {
     const identifier = getRecordIdentifier(entry.table_name, entry.new_data || entry.old_data);
     const tableLabel = getTableLabel(entry.table_name).toLowerCase();
@@ -364,6 +377,13 @@ export function AuditLog() {
             }
           });
           if (changedFields.length === 0) return `Updated ${tableLabel}${identifier ? `: ${identifier}` : ''}`;
+          const budgetNotes = ['budget', 'gas_budget']
+            .map(f => ({ f, diff: getBudgetChange(entry, f) }))
+            .filter(({ diff }) => diff !== null && diff !== 0)
+            .map(({ f, diff }) => `${describeBudgetChange(diff as number)} (${getFieldLabel(entry.table_name, f)})`);
+          if (budgetNotes.length > 0 && changedFields.length === budgetNotes.length) {
+            return `${budgetNotes.join(' and ')} for ${identifier || tableLabel}`;
+          }
           if (changedFields.length <= 2) {
             return `Changed ${changedFields.join(' and ')} for ${identifier || tableLabel}`;
           }
@@ -469,6 +489,16 @@ export function AuditLog() {
                     {formatValue(entry.table_name, field, newValue)}
                   </span>
                 </div>
+                {(() => {
+                  const diff = getBudgetChange(entry, field);
+                  if (diff === null || diff === 0) return null;
+                  return (
+                    <div className={`mt-2 inline-flex items-center gap-1 text-sm font-semibold px-2 py-1 rounded ${diff < 0 ? 'text-red-700 bg-red-50' : 'text-green-700 bg-green-50'}`}>
+                      <DollarSign className="w-3.5 h-3.5" />
+                      {describeBudgetChange(diff)}
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>

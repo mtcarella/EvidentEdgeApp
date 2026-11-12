@@ -9,7 +9,7 @@ import { formatContactData } from '../lib/formatters';
 import { ContactEditModal } from './ContactEditModal';
 import { expandSearchTermWithNicknames } from '../lib/nicknameMapper';
 import { formatDateShort, getESTToday, getTodayDateString } from '../lib/dateUtils';
-import { deductBudget, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
+import { deductBudget, findPriorExpensesWithAmount, formatCurrency, getBudgetTypeForContact, getBudgetLabel } from '../lib/budgetUtils';
 import { ExpenseListEditor, ExpenseDraft, expensesValid, expensesTotal, buildReceiptFilename } from './ExpenseListEditor';
 import * as XLSX from 'xlsx';
 
@@ -331,6 +331,22 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
     if (quickMeetingHasExpense && !quickMeetingExpenseMethod) return;
     if (quickMeetingHasExpense && !expensesValid(quickMeetingExpenses)) return;
 
+    if (quickMeetingHasExpense) {
+      const total = expensesTotal(quickMeetingExpenses);
+      const matches = total > 0 ? await findPriorExpensesWithAmount(salesPerson.id, total) : [];
+      if (matches.length > 0) {
+        const list = matches
+          .slice(0, 3)
+          .map(m => `${formatDateShort(m.meetingDate)}${m.contactName ? ` (${m.contactName})` : ''}`)
+          .join(', ');
+        const proceed = await dialog.confirm(
+          `You already logged an expense of ${formatCurrency(total)} on ${list}. Is this a different expense? Saving will deduct ${formatCurrency(total)} from your budget again.`,
+          { title: 'Possible duplicate expense', confirmLabel: 'Yes, save it', cancelLabel: 'Go back' }
+        );
+        if (!proceed) return;
+      }
+    }
+
     setQuickMeetingSaving(true);
     try {
       const expenseTotal = quickMeetingHasExpense ? expensesTotal(quickMeetingExpenses) : 0;
@@ -426,7 +442,9 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
         const primaryContact = contacts.find(c => c.id === quickMeetingContactId);
         const budgetType = getBudgetTypeForContact(primaryContact?.name);
         const result = await deductBudget(salesPerson.id, expenseTotal, budgetType, '', primaryMeetingId);
-        if (result.exceeded && result.newBalance !== null) {
+        if (!result.success) {
+          await dialog.alert(`Your meeting was saved, but the ${formatCurrency(expenseTotal)} expense could not be charged to your ${getBudgetLabel(budgetType)}. Please contact an administrator so it can be applied.`, { title: 'Budget not updated' });
+        } else if (result.exceeded && result.newBalance !== null) {
           setBudgetWarning(`Warning: This expense exceeds your available ${getBudgetLabel(budgetType)}. Current ${getBudgetLabel(budgetType)} balance: ${formatCurrency(result.newBalance)}`);
           setTimeout(() => setBudgetWarning(null), 8000);
         }
