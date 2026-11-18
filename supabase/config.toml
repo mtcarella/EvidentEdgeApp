@@ -1,0 +1,2 @@
+[functions.set-user-active]
+verify_jwt = true

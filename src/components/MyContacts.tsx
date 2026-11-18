@@ -473,7 +473,10 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
 
     setExportLoading(true);
     try {
+      const isHolidayExport = filterType === 'holiday';
+      const ownerName = salesPerson?.name?.trim() || 'Unknown User';
       const worksheetData = contactsToExport.map((contact: any) => ({
+        ...(isHolidayExport ? { 'Salesperson': ownerName } : {}),
         'Name': contact.name || '',
         'First Name': contact.first_name || '',
         'Last Name': contact.last_name || '',
@@ -505,10 +508,13 @@ export function MyContacts({ onNavigateToBudgetRequests }: MyContactsProps) {
 
       const worksheet = XLSX.utils.json_to_sheet(worksheetData);
       const workbook = XLSX.utils.book_new();
-      const isHolidayExport = filterType === 'holiday';
       XLSX.utils.book_append_sheet(workbook, worksheet, isHolidayExport ? 'Holiday Invites' : 'My Contacts');
 
-      XLSX.writeFile(workbook, `${isHolidayExport ? 'holiday_card_party_invites' : 'my_contacts'}_${getTodayDateString()}.xlsx`);
+      const safeOwnerName = ownerName.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'Unknown_User';
+      const fileName = isHolidayExport
+        ? `${safeOwnerName}_holiday_card_party_invites_${getTodayDateString()}.xlsx`
+        : `my_contacts_${getTodayDateString()}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
     } catch (error) {
       console.error('Error exporting contacts:', error);
       await dialog.alert('Failed to export contacts');

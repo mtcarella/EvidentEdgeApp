@@ -61,12 +61,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const lastActivityRef = useRef(Date.now());
   const fetchedUserIdRef = useRef<string | null>(null);
 
+  const signOutDeactivated = () => {
+    setTimeout(async () => {
+      fetchedUserIdRef.current = null;
+      setSalesPerson(null);
+      setUser(null);
+      await supabase.auth.signOut();
+      alert('Your account has been deactivated. Please contact an administrator.');
+    }, 0);
+  };
+
   const fetchSalesPerson = async (userId: string) => {
     const { data } = await supabase
       .from('sales_people')
-      .select('id, user_id, name, email, role, force_password_reset, chat_enabled, budget, gas_budget, budget_display_enabled, budget_edit_enabled, friends_family_enabled, file_viewer_enabled, lunch_required')
+      .select('id, user_id, name, email, role, force_password_reset, chat_enabled, budget, gas_budget, budget_display_enabled, budget_edit_enabled, friends_family_enabled, file_viewer_enabled, lunch_required, is_active')
       .eq('user_id', userId)
       .maybeSingle();
+
+    if (data && (data as { is_active?: boolean }).is_active === false) {
+      setSalesPerson(null);
+      signOutDeactivated();
+      return;
+    }
 
     setSalesPerson((prev) => {
       if (!data) return null;
@@ -108,11 +124,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!user) return;
 
-    const checkInactivity = setInterval(() => {
+    const checkInactivity = setInterval(async () => {
       const timeSinceLastActivity = Date.now() - lastActivityRef.current;
       if (timeSinceLastActivity >= INACTIVITY_TIMEOUT) {
         signOut();
         alert('You have been logged out due to inactivity.');
+        return;
+      }
+      const { data } = await supabase
+        .from('sales_people')
+        .select('is_active')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (data && data.is_active === false) {
+        signOutDeactivated();
       }
     }, 60000);
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel, Pencil, Trash2, ArrowLeft, Save } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel, Pencil, Trash2, ArrowLeft, Save, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -297,6 +298,76 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
     return new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   };
 
+  const [exporting, setExporting] = useState(false);
+
+  const exportToExcel = async () => {
+    if (filteredTransactions.length === 0) return;
+    setExporting(true);
+    try {
+      const meetingIds = Array.from(new Set(filteredTransactions.map(t => t.meeting_id).filter((id): id is string => !!id)));
+      const meetingMap = new Map<string, { meeting_date: string; notes: string | null; contact: string }>();
+      for (let i = 0; i < meetingIds.length; i += 200) {
+        const { data, error } = await supabase
+          .from('meetings')
+          .select('id, meeting_date, notes, contact:contacts(name)')
+          .in('id', meetingIds.slice(i, i + 200));
+        if (error) throw error;
+        (data || []).forEach((m: any) => {
+          const contact = Array.isArray(m.contact) ? m.contact[0] : m.contact;
+          meetingMap.set(m.id, { meeting_date: m.meeting_date, notes: m.notes, contact: contact?.name ?? '' });
+        });
+      }
+
+      const rows = filteredTransactions.map(t => {
+        const m = t.meeting_id ? meetingMap.get(t.meeting_id) : undefined;
+        const d = new Date(t.created_at);
+        return {
+          'Date': d.toLocaleDateString('en-US'),
+          'Time': d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+          'Description': t.description || '',
+          'Contact': m?.contact ?? '',
+          'Meeting Date': m?.meeting_date ? new Date(m.meeting_date + 'T00:00:00').toLocaleDateString('en-US') : '',
+          'Meeting Notes': m?.notes ?? '',
+          'Account': t.budget_type === 'gas' ? 'Gas' : 'Budget',
+          'Type': t.type === 'credit' ? 'Credit' : 'Debit',
+          'Amount': t.type === 'credit' ? t.amount : -t.amount,
+          'Balance After': t.balance_after ?? '',
+        };
+      });
+
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.sheet_add_aoa(sheet, [
+        [],
+        ['Regular Budget', '', '', '', '', '', '', 'Credits', regularSummary.totalCredits],
+        ['', '', '', '', '', '', '', 'Debits', -regularSummary.totalDebits],
+        ['', '', '', '', '', '', '', 'Net Change', regularSummary.net],
+        ['Gas Budget', '', '', '', '', '', '', 'Credits', gasSummary.totalCredits],
+        ['', '', '', '', '', '', '', 'Debits', -gasSummary.totalDebits],
+        ['', '', '', '', '', '', '', 'Net Change', gasSummary.net],
+      ], { origin: -1 });
+
+      const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+      for (let r = 1; r <= range.e.r; r++) {
+        for (const c of [8, 9]) {
+          const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+          if (cell && typeof cell.v === 'number') cell.z = '$#,##0.00;-$#,##0.00';
+        }
+      }
+      sheet['!cols'] = [{ wch: 12 }, { wch: 10 }, { wch: 40 }, { wch: 26 }, { wch: 13 }, { wch: 50 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Budget Transactions');
+      const person = (targetUserName || salesPerson?.name || 'budget').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+      const today = new Date().toISOString().split('T')[0];
+      XLSX.writeFile(workbook, `${person}_budget_transactions_${today}.xlsx`);
+    } catch (err) {
+      console.error('Error exporting budget transactions:', err);
+      await dialog.alert('The export could not be created. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const getMeetingTypes = (meeting: MeetingDetail) => {
     const types: string[] = [];
     if (meeting.is_meeting) types.push('Meeting');
@@ -341,9 +412,20 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
             </h2>
           </div>
         </div>
-        <span className="text-sm text-slate-500">
-          {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-slate-500">
+            {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            onClick={exportToExcel}
+            disabled={exporting || filteredTransactions.length === 0}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export the transactions shown below to Excel"
+          >
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+            Export to Excel
+          </button>
+        </div>
       </div>
 
       {/* Summary Bars - Regular Budget */}

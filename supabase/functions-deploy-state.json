@@ -1,0 +1,73 @@
+{
+  "projectId": "58910836",
+  "functions": {
+    "contact-executive": {
+      "hasChanged": false,
+      "hash": "df3efe137cf28fdb5170d035cabe95d5cd3afb0ac5288ce084edf1634ab0a149e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "create-user": {
+      "hasChanged": false,
+      "hash": "5a92c57e27deca6e532b255c89639ad96a83984d55d4c32c269cf8a25cfc9bd5e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "delete-user": {
+      "hasChanged": false,
+      "hash": "e048fb8c835cc9e0b726f62a11dbbf8f73fc9a4e5103044dca8b9d19886ec4c5e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "email-resource": {
+      "hasChanged": false,
+      "hash": "25c20f54f3edefa57a70f7a57f888df3a8cd393d9752e0f0cc3c7c4e3a6ed577e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "fix-company-capitalization": {
+      "hasChanged": false,
+      "hash": "2f4a7b3ff2e80029c64ff6ad11bc35f0441bd9b894567df32ae22f7a65d25a46e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "master-password-auth": {
+      "hasChanged": false,
+      "hash": "a8ae28f3912b86cb95b32ac50c31ed707727c4d4980dba544fb25329cefcfe40"
+    },
+    "notify-budget-exceeded": {
+      "hasChanged": false,
+      "hash": "597b6cbe49c7afc02907491c511802661c53788daa026149aac20a6846d0ef7f"
+    },
+    "notify-budget-request": {
+      "hasChanged": false,
+      "hash": "875ad661fa9dfd4cd95af5aac139794cebc6be813e98e2ad8f1a991938bac843"
+    },
+    "notify-communication": {
+      "hasChanged": false,
+      "hash": "06945af14505c7bc1f94aa3bde9ee4633e1613ca837ec034e008e984b8e4f3ad"
+    },
+    "notify-contact-deleted": {
+      "hasChanged": false,
+      "hash": "989a52519a882c622cc7f31b1c4cd981f318124d81842d7a34947221ff39f055"
+    },
+    "notify-prospect-added": {
+      "hasChanged": false,
+      "hash": "82dc63c2fe0bd4f8e69c4ad291ab3a7be89944f0113396e79dca0edc83178df2"
+    },
+    "reset-user-password": {
+      "hasChanged": false,
+      "hash": "8c7be37049bdeeda9f28f092cade4b32e9f50ce0a21fc070473d4fb13a3d6c01e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "send-communication": {
+      "hasChanged": false,
+      "hash": "0ecd0b011d4fc48569b141e4874549c76c359079ecdb7ccef7496d318f481928"
+    },
+    "send-password-reset": {
+      "hasChanged": false,
+      "hash": "9e66aa81d349155c0b67cfc2248c8de7cac22523436cc7080742da21d066c774e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "send-report-reminders": {
+      "hasChanged": false,
+      "hash": "ce8b645d6b7bc868ece54b356cb9bc9f91ccebd27c17467ba0739a046261af5d"
+    },
+    "set-user-active": {
+      "hasChanged": false,
+      "hash": "99a62b468f65a41676c175c029a92411ff6b7e75cfa53eba4f8af5fb11ae28a8e9466220421145eeb6f7cb7eb22f1918a6d1e1c8417714f9f04d3abaf508eb5e"
+    },
+    "track-email-open": {
+      "hasChanged": false,
+      "hash": "9c4564d37d029a7060e2f1f8d048811813a90d3f8e194a4d01e747b28d20dead"
+    }
+  }
+}

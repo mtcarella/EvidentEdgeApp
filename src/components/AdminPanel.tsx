@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings, LogIn, Coffee } from 'lucide-react';
+import { Database, RefreshCw, Trash2, CreditCard as Edit2, Save, X, Shield, User, Download, Key, UserX, Search, CheckSquare, Square, Users, ArrowUpDown, ArrowUp, ArrowDown, Eye, UserPlus, Copy, Mail, FileText, Settings, LogIn, Coffee, UserCheck, Gift } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -76,6 +76,7 @@ export function AdminPanel() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exportingInvites, setExportingInvites] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
@@ -299,11 +300,11 @@ export function AdminPanel() {
           }
         }
       } else if (viewMode === 'salespeople') {
+        const original = salesPeople.find(p => p.id === editingId);
         const updateData = {
           name: editForm.name,
           email: editForm.email,
           role: editForm.role,
-          is_active: editForm.is_active,
         };
 
         console.log('Updating salesperson with data:', updateData);
@@ -329,6 +330,15 @@ export function AdminPanel() {
         }
 
         console.log('Successfully updated salesperson:', data);
+
+        if (original && editingId && original.is_active !== editForm.is_active) {
+          try {
+            await setUserActive(editingId, editForm.is_active);
+          } catch (statusError) {
+            await dialog.alert(`Saved other changes, but could not update active status: ${statusError instanceof Error ? statusError.message : 'Unknown error'}`);
+            return;
+          }
+        }
       }
 
       cancelEdit();
@@ -370,10 +380,7 @@ export function AdminPanel() {
           const { error } = await supabase.from('sales_people').delete().eq('id', id);
           if (error) throw error;
         } else {
-          const { error } = await supabase.from('sales_people')
-            .update({ is_active: false })
-            .eq('id', id);
-          if (error) throw error;
+          await setUserActive(id, false);
         }
         await dialog.alert('User deactivated successfully');
         loadData();
@@ -383,6 +390,40 @@ export function AdminPanel() {
       } finally {
         setLoading(false);
       }
+    }
+  };
+
+  const setUserActive = async (salesPersonId: string, active: boolean) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/set-user-active`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ salesPersonId, active }),
+      }
+    );
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Failed to update user status');
+  };
+
+  const reactivateUser = async (id: string) => {
+    if (!(await dialog.confirm('Reactivate this user? They will be able to log in again.'))) return;
+    try {
+      setLoading(true);
+      await setUserActive(id, true);
+      await dialog.alert('User reactivated successfully');
+      loadData();
+    } catch (error) {
+      await dialog.alert(`Failed to reactivate user: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -975,6 +1016,52 @@ export function AdminPanel() {
     }
   });
 
+  const exportAllHolidayInvites = async () => {
+    setExportingInvites(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_export_holiday_invites');
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length === 0) {
+        await dialog.alert('No users have added any contacts to their holiday card/party invite list yet.');
+        return;
+      }
+
+      const worksheetData = data.map((row: any) => {
+        const contact = row.contact || {};
+        return {
+          'Invited By': row.invited_by_name || 'Unknown User',
+          'Invited By Email': row.invited_by_email || '',
+          'Contact Name': contact.name || '',
+          'First Name': contact.first_name || '',
+          'Last Name': contact.last_name || '',
+          'Type': contact.type || '',
+          'Company': contact.company || '',
+          'Branch': contact.branch || '',
+          'Email': contact.email || '',
+          'Phone': contact.phone || '',
+          'Cell Phone': contact.cell_phone || '',
+          'Address': contact.address || '',
+          'Grade': contact.grade || '',
+          'Drinks': contact.drinks ? 'Yes' : 'No',
+          'Driver': contact.driver ? 'Yes' : 'No',
+          'Notes': contact.notes || '',
+          'Added To List': row.invite_added_at ? new Date(row.invite_added_at).toLocaleString() : '',
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+      worksheet['!autofilter'] = { ref: worksheet['!ref'] || 'A1' };
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'All Holiday Invites');
+      XLSX.writeFile(workbook, `all_users_holiday_card_party_invites_${getTodayDateString()}.xlsx`);
+    } catch (error) {
+      console.error('Error exporting holiday invites:', error);
+      await dialog.alert('Failed to export holiday card/party invites. Please try again.');
+    } finally {
+      setExportingInvites(false);
+    }
+  };
+
   const exportToCSV = async () => {
     try {
       let filename = '';
@@ -1214,6 +1301,17 @@ export function AdminPanel() {
           <Download className="w-4 h-4" />
           Export Excel
         </button>
+        {isAdmin && (
+          <button
+            onClick={exportAllHolidayInvites}
+            disabled={exportingInvites}
+            title="Download every user's holiday card/party invite list in one spreadsheet"
+            className="px-4 py-2 bg-red-700 hover:bg-red-800 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+          >
+            <Gift className={`w-4 h-4 ${exportingInvites ? 'animate-pulse' : ''}`} />
+            {exportingInvites ? 'Exporting...' : 'Export All Holiday Invites'}
+          </button>
+        )}
         <button
           onClick={loadData}
           disabled={loading}
@@ -2046,7 +2144,7 @@ export function AdminPanel() {
                       </button>
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end items-center gap-2">
                         <button
                           onClick={() => startEdit(person)}
                           className="p-1 text-blue-600 hover:bg-blue-50 rounded"
@@ -2074,14 +2172,36 @@ export function AdminPanel() {
                             <LogIn className="w-4 h-4" />
                           </button>
                         )}
-                        <button
-                          onClick={() => deleteItem(person.id)}
-                          className="p-1 text-orange-600 hover:bg-orange-50 rounded"
-                          title={person.user_id ? "Deactivate user" : "Delete user record"}
-                          disabled={loading}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {person.user_id && !person.is_active ? (
+                          <button
+                            onClick={() => reactivateUser(person.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 hover:bg-green-100 rounded-md transition-colors whitespace-nowrap"
+                            title="Reactivate user"
+                            disabled={loading}
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            Reactivate
+                          </button>
+                        ) : person.user_id ? (
+                          <button
+                            onClick={() => deleteItem(person.id)}
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-200 hover:bg-orange-100 rounded-md transition-colors whitespace-nowrap"
+                            title="Deactivate user"
+                            disabled={loading}
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => deleteItem(person.id)}
+                            className="p-1 text-orange-600 hover:bg-orange-50 rounded"
+                            title="Delete user record"
+                            disabled={loading}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => permanentlyDeleteUser(person.id)}
                           className="p-1 text-red-600 hover:bg-red-50 rounded"

@@ -110,7 +110,10 @@ export function LoginForm() {
         if (error) throw error;
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      const message: string = err.message || 'An error occurred';
+      setError(/banned/i.test(message)
+        ? 'Your account has been deactivated. Please contact an administrator.'
+        : message);
     } finally {
       setLoading(false);
     }

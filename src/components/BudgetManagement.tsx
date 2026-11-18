@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, Undo2, X, Fuel, Eye } from 'lucide-react';
+import { DollarSign, Check, Loader2, AlertCircle, RefreshCw, PlusCircle, MinusCircle, Undo2, X, Fuel, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BudgetType } from '../lib/budgetUtils';
@@ -17,12 +17,13 @@ interface BudgetUser {
 }
 
 type RowStatus = 'idle' | 'saving' | 'saved' | 'error';
+type AdjustMode = 'add' | 'subtract';
 
 interface UndoEntry {
   userId: string;
   field: BudgetField;
   previousValue: number;
-  addedAmount: number;
+  delta: number;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -36,7 +37,8 @@ export function BudgetManagement() {
   const [rowStatuses, setRowStatuses] = useState<Record<RowKey, RowStatus>>({});
   const [addFundsInputs, setAddFundsInputs] = useState<Record<RowKey, string>>({});
   const [addFundsErrors, setAddFundsErrors] = useState<Record<RowKey, string>>({});
-  const [addFundsOpen, setAddFundsOpen] = useState<Record<RowKey, boolean>>({});
+  const [adjustMode, setAdjustMode] = useState<Record<RowKey, AdjustMode | undefined>>({});
+  const [reasonInputs, setReasonInputs] = useState<Record<RowKey, string>>({});
   const [undoEntries, setUndoEntries] = useState<Record<RowKey, UndoEntry>>({});
   const [focusedKey, setFocusedKey] = useState<RowKey | null>(null);
   const [viewingUser, setViewingUser] = useState<BudgetUser | null>(null);
@@ -157,8 +159,17 @@ export function BudgetManagement() {
     return null;
   };
 
-  const handleAddFunds = useCallback(async (userId: string, field: BudgetField) => {
+  const closeAdjust = (key: RowKey) => {
+    setAdjustMode(prev => ({ ...prev, [key]: undefined }));
+    setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
+    setReasonInputs(prev => ({ ...prev, [key]: '' }));
+    setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
+  };
+
+  const handleAdjust = useCallback(async (userId: string, field: BudgetField) => {
     const key = rk(userId, field);
+    const mode = adjustMode[key];
+    if (!mode) return;
     const inputValue = addFundsInputs[key] || '';
     const validationError = validateAddFunds(inputValue);
     if (validationError) {
@@ -170,20 +181,28 @@ export function BudgetManagement() {
     const user = users.find(u => u.id === userId);
     if (!user) return;
 
+    const delta = mode === 'add' ? amount : -amount;
+    const reason = (reasonInputs[key] || '').trim();
     const previousValue = parseFloat(String(user[field])) || 0;
-    const newValue = Math.round((previousValue + amount) * 100) / 100;
+    const newValue = Math.round((previousValue + delta) * 100) / 100;
 
     setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: newValue } : u));
     const success = await saveBudget(userId, field, newValue);
 
     if (success) {
-      setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
-      setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
-      setAddFundsOpen(prev => ({ ...prev, [key]: false }));
+      closeAdjust(key);
 
       const adminName = salesPerson?.name || 'Admin';
       const fieldLabel = field === 'gas_budget' ? 'gas budget' : 'budget';
-      logTransaction(user, field, amount, 'credit', newValue, `${adminName} added funds to ${fieldLabel}`);
+      const action = mode === 'add' ? `added funds to ${fieldLabel}` : `subtracted funds from ${fieldLabel}`;
+      logTransaction(
+        user,
+        field,
+        amount,
+        mode === 'add' ? 'credit' : 'debit',
+        newValue,
+        `${adminName} ${action}${reason ? ` — ${reason}` : ''}`
+      );
 
       if (undoEntries[key]) clearTimeout(undoEntries[key].timer);
 
@@ -197,12 +216,12 @@ export function BudgetManagement() {
 
       setUndoEntries(prev => ({
         ...prev,
-        [key]: { userId, field, previousValue, addedAmount: amount, timer },
+        [key]: { userId, field, previousValue, delta, timer },
       }));
     } else {
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, [field]: previousValue } : u));
     }
-  }, [addFundsInputs, users, saveBudget, undoEntries, logTransaction, salesPerson]);
+  }, [adjustMode, addFundsInputs, reasonInputs, users, saveBudget, undoEntries, logTransaction, salesPerson]);
 
   const handleUndo = useCallback(async (key: RowKey) => {
     const entry = undoEntries[key];
@@ -215,7 +234,15 @@ export function BudgetManagement() {
 
     if (targetUser) {
       const fieldLabel = entry.field === 'gas_budget' ? 'gas budget' : 'budget';
-      logTransaction(targetUser, entry.field, entry.addedAmount, 'debit', entry.previousValue, `Undo: funds removed from ${fieldLabel}`);
+      const wasAdd = entry.delta > 0;
+      logTransaction(
+        targetUser,
+        entry.field,
+        Math.abs(entry.delta),
+        wasAdd ? 'debit' : 'credit',
+        entry.previousValue,
+        wasAdd ? `Undo: funds removed from ${fieldLabel}` : `Undo: funds returned to ${fieldLabel}`
+      );
     }
 
     setUndoEntries(prev => {
@@ -232,15 +259,12 @@ export function BudgetManagement() {
     }
   };
 
-  const handleAddFundsKeyDown = (e: React.KeyboardEvent, userId: string, field: BudgetField) => {
-    const key = rk(userId, field);
+  const handleAdjustKeyDown = (e: React.KeyboardEvent, userId: string, field: BudgetField) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      handleAddFunds(userId, field);
+      handleAdjust(userId, field);
     } else if (e.key === 'Escape') {
-      setAddFundsOpen(prev => ({ ...prev, [key]: false }));
-      setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
-      setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
+      closeAdjust(rk(userId, field));
     }
   };
 
@@ -253,7 +277,8 @@ export function BudgetManagement() {
     const user = users.find(u => u.id === userId);
     if (!user) return null;
     const currentValue = parseFloat(String(user[field])) || 0;
-    return Math.round((currentValue + amount) * 100) / 100;
+    const delta = adjustMode[key] === 'subtract' ? -amount : amount;
+    return Math.round((currentValue + delta) * 100) / 100;
   };
 
   const formatCurrency = (value: number) => {
@@ -333,81 +358,98 @@ export function BudgetManagement() {
 
   const renderAddFundsCell = (user: BudgetUser, field: BudgetField) => {
     const key = rk(user.id, field);
-    const isOpen = addFundsOpen[key] || false;
-    const addInput = addFundsInputs[key] || '';
-    const addError = addFundsErrors[key] || '';
+    const mode = adjustMode[key];
+    const amountInput = addFundsInputs[key] || '';
+    const reasonInput = reasonInputs[key] || '';
+    const amountError = addFundsErrors[key] || '';
     const previewTotal = getPreviewTotal(user.id, field);
     const undoEntry = undoEntries[key];
-    const accent = field === 'gas_budget' ? 'amber' : 'emerald';
-    const accentClasses = field === 'gas_budget'
-      ? { bg: 'bg-amber-50', hoverBg: 'hover:bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', solid: 'bg-amber-600 hover:bg-amber-700', focus: 'focus:ring-amber-500/30 focus:border-amber-400', plus: 'text-amber-600' }
-      : { bg: 'bg-emerald-50', hoverBg: 'hover:bg-emerald-100', text: 'text-emerald-700', border: 'border-emerald-200', solid: 'bg-emerald-600 hover:bg-emerald-700', focus: 'focus:ring-emerald-500/30 focus:border-emerald-400', plus: 'text-emerald-600' };
+    const addClasses = field === 'gas_budget'
+      ? { soft: 'text-amber-700 bg-amber-50 hover:bg-amber-100 border-amber-200', solid: 'bg-amber-600 hover:bg-amber-700', focus: 'focus:ring-amber-500/30 focus:border-amber-400', text: 'text-amber-600' }
+      : { soft: 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200', solid: 'bg-emerald-600 hover:bg-emerald-700', focus: 'focus:ring-emerald-500/30 focus:border-emerald-400', text: 'text-emerald-600' };
+    const subtractClasses = { soft: 'text-red-700 bg-red-50 hover:bg-red-100 border-red-200', solid: 'bg-red-600 hover:bg-red-700', focus: 'focus:ring-red-500/30 focus:border-red-400', text: 'text-red-600' };
+    const active = mode === 'subtract' ? subtractClasses : addClasses;
+
+    if (!mode) {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setAdjustMode(prev => ({ ...prev, [key]: 'add' }))}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-lg transition-colors ${addClasses.soft}`}
+          >
+            <PlusCircle className="w-3.5 h-3.5" />
+            Add
+          </button>
+          <button
+            onClick={() => setAdjustMode(prev => ({ ...prev, [key]: 'subtract' }))}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium border rounded-lg transition-colors ${subtractClasses.soft}`}
+          >
+            <MinusCircle className="w-3.5 h-3.5" />
+            Subtract
+          </button>
+          {undoEntry && (
+            <button
+              onClick={() => handleUndo(key)}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors animate-pulse"
+              title="Reverse the last change"
+            >
+              <Undo2 className="w-3 h-3" />
+              Undo {undoEntry.delta > 0 ? '+' : '-'}{formatCurrency(Math.abs(undoEntry.delta))}
+            </button>
+          )}
+        </div>
+      );
+    }
 
     return (
-      <div className="flex flex-col gap-1">
-        {!isOpen ? (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setAddFundsOpen(prev => ({ ...prev, [key]: true }))}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium ${accentClasses.text} ${accentClasses.bg} ${accentClasses.hoverBg} border ${accentClasses.border} rounded-lg transition-colors`}
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              Add
-            </button>
-            {undoEntry && (
-              <button
-                onClick={() => handleUndo(key)}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors animate-pulse"
-                title={`Undo +${formatCurrency(undoEntry.addedAmount)}`}
-              >
-                <Undo2 className="w-3 h-3" />
-                Undo +{formatCurrency(undoEntry.addedAmount)}
-              </button>
-            )}
+      <div className="flex flex-col gap-1.5 w-60">
+        <div className="flex items-center gap-1.5">
+          <div className="relative">
+            <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${active.text} text-sm font-medium`}>
+              {mode === 'add' ? '+$' : '-$'}
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={amountInput}
+              onChange={(e) => handleAddFundsInputChange(key, e.target.value)}
+              onKeyDown={(e) => handleAdjustKeyDown(e, user.id, field)}
+              autoFocus
+              className={`w-24 pl-8 pr-2 py-1.5 text-sm border rounded-lg bg-white focus:ring-2 ${active.focus} transition-all outline-none ${
+                amountError ? 'border-red-300' : 'border-slate-200'
+              }`}
+            />
           </div>
-        ) : (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1.5">
-              <div className="relative">
-                <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${accentClasses.plus} text-sm font-medium`}>+$</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={addInput}
-                  onChange={(e) => handleAddFundsInputChange(key, e.target.value)}
-                  onKeyDown={(e) => handleAddFundsKeyDown(e, user.id, field)}
-                  autoFocus
-                  className={`w-24 pl-8 pr-2 py-1.5 text-sm border rounded-lg bg-white focus:ring-2 ${accentClasses.focus} transition-all outline-none ${
-                    addError ? 'border-red-300' : 'border-slate-200'
-                  }`}
-                />
-              </div>
-              <button
-                onClick={() => handleAddFunds(user.id, field)}
-                className={`px-2.5 py-1.5 text-sm font-medium text-white ${accentClasses.solid} rounded-lg transition-colors`}
-              >
-                Add
-              </button>
-              <button
-                onClick={() => {
-                  setAddFundsOpen(prev => ({ ...prev, [key]: false }));
-                  setAddFundsInputs(prev => ({ ...prev, [key]: '' }));
-                  setAddFundsErrors(prev => ({ ...prev, [key]: '' }));
-                }}
-                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            {addError && <span className="text-xs text-red-600">{addError}</span>}
-            {previewTotal !== null && (
-              <span className={`text-xs ${accent === 'amber' ? 'text-amber-600' : 'text-emerald-600'} font-medium`}>
-                New Total: {formatCurrency(previewTotal)}
-              </span>
-            )}
-          </div>
+          <button
+            onClick={() => handleAdjust(user.id, field)}
+            className={`px-2.5 py-1.5 text-sm font-medium text-white ${active.solid} rounded-lg transition-colors`}
+          >
+            {mode === 'add' ? 'Add' : 'Subtract'}
+          </button>
+          <button
+            onClick={() => closeAdjust(key)}
+            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+            title="Cancel"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <input
+          type="text"
+          maxLength={200}
+          placeholder="Reason (optional)"
+          value={reasonInput}
+          onChange={(e) => setReasonInputs(prev => ({ ...prev, [key]: e.target.value }))}
+          onKeyDown={(e) => handleAdjustKeyDown(e, user.id, field)}
+          className={`w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:ring-2 ${active.focus} transition-all outline-none`}
+        />
+        {amountError && <span className="text-xs text-red-600">{amountError}</span>}
+        {previewTotal !== null && (
+          <span className={`text-xs font-medium ${previewTotal < 0 ? 'text-red-600' : active.text}`}>
+            New Total: {formatCurrency(previewTotal)}
+          </span>
         )}
       </div>
     );
@@ -443,13 +485,13 @@ export function BudgetManagement() {
                   <DollarSign className="w-3.5 h-3.5 text-emerald-600" /> Regular Budget
                 </span>
               </th>
-              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add</th>
+              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Adjust</th>
               <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 <span className="inline-flex items-center gap-1.5">
                   <Fuel className="w-3.5 h-3.5 text-amber-600" /> Gas Budget
                 </span>
               </th>
-              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Add</th>
+              <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Adjust</th>
               <th className="text-left py-3 px-5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Last Updated</th>
               <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-12">Log</th>
             </tr>

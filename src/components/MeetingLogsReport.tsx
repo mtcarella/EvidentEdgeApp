@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, DollarSign, FileArchive, Eye, ChevronDown, ChevronRight, AlertTriangle, FileText } from 'lucide-react';
+import { Calendar, Download, RefreshCw, Search, Filter, X, CreditCard as Edit2, Trash2, DollarSign, FileArchive, Eye, ChevronDown, ChevronRight, AlertTriangle, FileText, Lock, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -1159,7 +1159,14 @@ export function MeetingLogsReport() {
                           className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent read-only:bg-slate-100 read-only:text-slate-600"
                         />
                         {((editingMeeting.expenses?.length ?? 0) > 0 || editExistingReceipts.length > 0) && (
-                          <p className="mt-1 text-xs text-slate-500">Total is calculated from the receipts below.</p>
+                          <div className="mt-2 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+                            <Lock className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                            <span>
+                              This total adds up the receipts below. To change it, click the
+                              <Pencil className="w-3 h-3 inline mx-1 -mt-0.5" />
+                              edit button on a receipt and update its amount.
+                            </span>
+                          </div>
                         )}
                       </div>
                       {/* Receipts Management Section */}
