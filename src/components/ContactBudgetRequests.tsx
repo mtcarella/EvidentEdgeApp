@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
 import { Toast } from './Toast';
-import { deductBudget } from '../lib/budgetUtils';
+import { deductBudget, restoreBudget } from '../lib/budgetUtils';
 
 interface BudgetRequest {
   id: string;
@@ -24,6 +24,7 @@ interface BudgetRequest {
   finalized_at: string | null;
   finalized_by: string | null;
   finalized_by_name?: string | null;
+  budget_deducted: boolean;
 }
 
 type Tab = 'pending' | 'approved' | 'rejected';
@@ -80,27 +81,99 @@ export function ContactBudgetRequests() {
 
   const toggleFinalized = async (request: BudgetRequest) => {
     const finalized = !request.finalized;
+    const amount = getDeductionAmount(request.transaction_type);
+
+    const confirmed = await dialog.confirm(
+      finalized
+        ? `Mark this request as finalized?${request.budget_deducted ? '' : ` This will deduct $${amount} from ${request.requesting_user_name}'s budget.`}`
+        : `Mark this request as not finalized?${request.budget_deducted ? ` The $${amount} will be returned to ${request.requesting_user_name}'s budget.` : ''}`,
+      finalized ? 'Finalize Request' : 'Undo Finalized'
+    );
+    if (!confirmed) return;
+
     const update = {
       finalized,
       finalized_at: finalized ? new Date().toISOString() : null,
       finalized_by: finalized ? user!.id : null,
     };
+
     setTogglingId(request.id);
-    const { error } = await supabase
-      .from('contact_budget_requests')
-      .update(update)
-      .eq('id', request.id);
+    const result = await applyFinalized(request, update, amount);
     setTogglingId(null);
 
-    if (error) {
-      setNotification({ type: 'error', message: 'Failed to update finalized status' });
+    if (!result.ok) {
+      setNotification({ type: 'error', message: result.message });
+      loadRequests();
       return;
     }
 
     setRequests(prev => prev.map(r => r.id === request.id
-      ? { ...r, ...update, finalized_by_name: finalized ? salesPerson?.name || null : null }
+      ? { ...r, ...update, budget_deducted: result.deducted, finalized_by_name: finalized ? salesPerson?.name || null : null }
       : r));
-    setNotification({ type: 'success', message: finalized ? 'Request marked as finalized.' : 'Request marked as not finalized.' });
+    setNotification({ type: 'success', message: result.message });
+    refreshSalesPerson();
+  };
+
+  const applyFinalized = async (
+    request: BudgetRequest,
+    update: { finalized: boolean; finalized_at: string | null; finalized_by: string | null },
+    amount: number
+  ): Promise<{ ok: true; deducted: boolean; message: string } | { ok: false; message: string }> => {
+    const finalized = update.finalized;
+    const description = `Friends and Family: ${request.buyer_borrower_name} (File ${request.file_number})`;
+
+    // Flip budget_deducted only if it is still in the opposite state, so a double click can't charge or refund twice.
+    const { data: claimed, error: claimError } = await supabase
+      .from('contact_budget_requests')
+      .update({ ...update, budget_deducted: finalized })
+      .eq('id', request.id)
+      .eq('status', 'approved')
+      .eq('budget_deducted', !finalized)
+      .select('id');
+
+    if (claimError) return { ok: false, message: 'Failed to update finalized status' };
+
+    if (!claimed || claimed.length === 0) {
+      const { error } = await supabase
+        .from('contact_budget_requests')
+        .update(update)
+        .eq('id', request.id);
+      if (error) return { ok: false, message: 'Failed to update finalized status' };
+      return { ok: true, deducted: finalized, message: finalized ? 'Request marked as finalized.' : 'Request marked as not finalized.' };
+    }
+
+    const { data: reqSalesPerson } = await supabase
+      .from('sales_people')
+      .select('id')
+      .eq('user_id', request.requesting_user_id)
+      .maybeSingle();
+
+    const budgetResult = reqSalesPerson
+      ? finalized
+        ? await deductBudget(reqSalesPerson.id, amount, 'regular', description)
+        : await restoreBudget(reqSalesPerson.id, amount, 'regular', `${description} - finalization undone`)
+      : { success: false, error: 'Could not find requesting user' };
+
+    if (!budgetResult.success) {
+      await supabase
+        .from('contact_budget_requests')
+        .update({
+          finalized: request.finalized,
+          finalized_at: request.finalized_at,
+          finalized_by: request.finalized_by,
+          budget_deducted: request.budget_deducted,
+        })
+        .eq('id', request.id);
+      return { ok: false, message: `Budget ${finalized ? 'deduction' : 'refund'} failed: ${budgetResult.error}` };
+    }
+
+    return {
+      ok: true,
+      deducted: finalized,
+      message: finalized
+        ? `Request finalized. $${amount} deducted from ${request.requesting_user_name}'s budget.`
+        : `Request marked as not finalized. $${amount} returned to ${request.requesting_user_name}'s budget.`,
+    };
   };
 
   const formatDate = (dateStr: string) => {
@@ -147,33 +220,12 @@ export function ContactBudgetRequests() {
   };
 
   const handleApprove = async (request: BudgetRequest) => {
-    const amount = getDeductionAmount(request.transaction_type);
     const confirmed = await dialog.confirm(
-      `Approve this Friends and Family request? This will deduct $${amount} from ${request.requesting_user_name}'s budget.`,
+      `Approve this Friends and Family request? ${request.requesting_user_name}'s budget will not be reduced until the request is marked as finalized.`,
       'Approve Request'
     );
     if (!confirmed) return;
 
-    // Get the sales_people id for the requesting user
-    const { data: reqSalesPerson } = await supabase
-      .from('sales_people')
-      .select('id')
-      .eq('user_id', request.requesting_user_id)
-      .maybeSingle();
-
-    if (!reqSalesPerson) {
-      setNotification({ type: 'error', message: 'Could not find requesting user' });
-      return;
-    }
-
-    // Deduct budget
-    const deductResult = await deductBudget(reqSalesPerson.id, amount);
-    if (!deductResult.success) {
-      setNotification({ type: 'error', message: `Budget deduction failed: ${deductResult.error}` });
-      return;
-    }
-
-    // Update request status
     const { error } = await supabase
       .from('contact_budget_requests')
       .update({
@@ -188,9 +240,8 @@ export function ContactBudgetRequests() {
       return;
     }
 
-    setNotification({ type: 'success', message: `Request approved. $${amount} deducted from ${request.requesting_user_name}'s budget.` });
+    setNotification({ type: 'success', message: 'Request approved. The budget will be reduced once it is marked as finalized.' });
     sendNotificationEmail(request, 'approved');
-    refreshSalesPerson();
     loadRequests();
   };
 
@@ -332,7 +383,7 @@ export function ContactBudgetRequests() {
                               ? 'bg-slate-800 border-slate-800 text-white hover:bg-slate-700'
                               : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50'
                           } ${togglingId === req.id ? 'opacity-60 pointer-events-none' : ''}`}
-                          title={req.finalized ? 'Uncheck to mark as not finalized' : 'Check once this request is finalized'}
+                          title={req.finalized ? 'Uncheck to mark as not finalized' : `Check once finalized - deducts $${getDeductionAmount(req.transaction_type)} from the budget`}
                         >
                           <input
                             type="checkbox"

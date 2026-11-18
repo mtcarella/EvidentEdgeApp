@@ -1,2 +1,5 @@
 [functions.set-user-active]
 verify_jwt = true
+
+[functions.notify-budget-request]
+verify_jwt = false

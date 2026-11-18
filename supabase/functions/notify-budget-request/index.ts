@@ -126,7 +126,7 @@ Deno.serve(async (req: Request) => {
         const statusLabel = isApproved ? "Approved" : "Rejected";
         const statusColor = isApproved ? "#047857" : "#dc2626";
         const deductionNote = isApproved
-          ? `<p style="margin: 8px 0;"><strong>Budget Deduction:</strong> ${transactionType === "purchase" ? "$100.00" : "$50.00"}</p>`
+          ? `<p style="margin: 8px 0;"><strong>Budget Deduction:</strong> ${transactionType === "purchase" ? "$100.00" : "$50.00"} (applied once the request is finalized)</p>`
           : "";
 
         const userHtml = `
