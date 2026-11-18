@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { DollarSign, Clock, Check, X, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { DollarSign, Clock, Check, X, AlertCircle, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useDialog } from '../contexts/DialogContext';
@@ -20,6 +20,10 @@ interface BudgetRequest {
   reviewed_at: string | null;
   reviewed_by: string | null;
   reviewed_by_name?: string | null;
+  finalized: boolean;
+  finalized_at: string | null;
+  finalized_by: string | null;
+  finalized_by_name?: string | null;
 }
 
 type Tab = 'pending' | 'approved' | 'rejected';
@@ -33,6 +37,7 @@ export function ContactBudgetRequests() {
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadRequests();
@@ -48,7 +53,7 @@ export function ContactBudgetRequests() {
 
     if (!error && data) {
       if (activeTab !== 'pending' && data.length > 0) {
-        const reviewerIds = [...new Set(data.filter(r => r.reviewed_by).map(r => r.reviewed_by))];
+        const reviewerIds = [...new Set(data.flatMap(r => [r.reviewed_by, r.finalized_by]).filter(Boolean))];
         if (reviewerIds.length > 0) {
           const { data: reviewers } = await supabase
             .from('sales_people')
@@ -59,6 +64,7 @@ export function ContactBudgetRequests() {
           setRequests(data.map(r => ({
             ...r,
             reviewed_by_name: r.reviewed_by ? reviewerMap.get(r.reviewed_by) || null : null,
+            finalized_by_name: r.finalized_by ? reviewerMap.get(r.finalized_by) || null : null,
           })) as BudgetRequest[]);
         } else {
           setRequests(data as BudgetRequest[]);
@@ -66,8 +72,35 @@ export function ContactBudgetRequests() {
       } else {
         setRequests(data as BudgetRequest[]);
       }
+    } else if (error) {
+      setNotification({ type: 'error', message: 'Failed to load requests' });
     }
     setLoading(false);
+  };
+
+  const toggleFinalized = async (request: BudgetRequest) => {
+    const finalized = !request.finalized;
+    const update = {
+      finalized,
+      finalized_at: finalized ? new Date().toISOString() : null,
+      finalized_by: finalized ? user!.id : null,
+    };
+    setTogglingId(request.id);
+    const { error } = await supabase
+      .from('contact_budget_requests')
+      .update(update)
+      .eq('id', request.id);
+    setTogglingId(null);
+
+    if (error) {
+      setNotification({ type: 'error', message: 'Failed to update finalized status' });
+      return;
+    }
+
+    setRequests(prev => prev.map(r => r.id === request.id
+      ? { ...r, ...update, finalized_by_name: finalized ? salesPerson?.name || null : null }
+      : r));
+    setNotification({ type: 'success', message: finalized ? 'Request marked as finalized.' : 'Request marked as not finalized.' });
   };
 
   const formatDate = (dateStr: string) => {
@@ -261,6 +294,11 @@ export function ContactBudgetRequests() {
                         }`}>
                           {req.transaction_type === 'purchase' ? 'Purchase ($100)' : 'Refi ($50)'}
                         </span>
+                        {req.finalized && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-white">
+                            <CheckCircle2 className="w-3 h-3" /> Finalized
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-slate-600 mt-1">
                         <span className="font-medium">From:</span> {req.requesting_user_name} — <span className="font-medium">File:</span> {req.file_number}
@@ -286,6 +324,26 @@ export function ContactBudgetRequests() {
                           </button>
                         </>
                       )}
+                      {activeTab === 'approved' && (
+                        <label
+                          onClick={(e) => e.stopPropagation()}
+                          className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer select-none transition-colors ${
+                            req.finalized
+                              ? 'bg-slate-800 border-slate-800 text-white hover:bg-slate-700'
+                              : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+                          } ${togglingId === req.id ? 'opacity-60 pointer-events-none' : ''}`}
+                          title={req.finalized ? 'Uncheck to mark as not finalized' : 'Check once this request is finalized'}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={req.finalized}
+                            onChange={() => toggleFinalized(req)}
+                            disabled={togglingId === req.id}
+                            className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          />
+                          Finalized
+                        </label>
+                      )}
                       {expandedId === req.id ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                     </div>
                   </div>
@@ -304,6 +362,9 @@ export function ContactBudgetRequests() {
                         )}
                         {req.reviewed_by_name && (
                           <div><span className="font-medium text-slate-700">Reviewed By:</span> <span className="text-slate-600">{req.reviewed_by_name}</span></div>
+                        )}
+                        {req.finalized && req.finalized_at && (
+                          <div><span className="font-medium text-slate-700">Finalized:</span> <span className="text-slate-600">{new Date(req.finalized_at).toLocaleString()}{req.finalized_by_name ? ` by ${req.finalized_by_name}` : ''}</span></div>
                         )}
                       </div>
                     </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel, Pencil, Trash2, ArrowLeft, Save, FileSpreadsheet } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowUpDown, Calendar, Filter, X, Loader2, DollarSign, TrendingUp, TrendingDown, Minus, Eye, Image, FileText, Fuel, Pencil, Trash2, ArrowLeft, Save, FileSpreadsheet, Wallet, Equal } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -55,6 +55,7 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
   const { salesPerson } = useAuth();
   const dialog = useDialog();
   const [transactions, setTransactions] = useState<BudgetTransaction[]>([]);
+  const [currentBalances, setCurrentBalances] = useState<{ regular: number; gas: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sortField, setSortField] = useState<SortField>('created_at');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -86,14 +87,29 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
     if (!effectiveUserId) return;
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from('budget_transactions')
-      .select('id, amount, type, category, description, budget_type, balance_after, created_at, meeting_id')
-      .eq('sales_person_id', effectiveUserId)
-      .order('created_at', { ascending: false });
+    const [txResult, balanceResult] = await Promise.all([
+      supabase
+        .from('budget_transactions')
+        .select('id, amount, type, category, description, budget_type, balance_after, created_at, meeting_id')
+        .eq('sales_person_id', effectiveUserId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('sales_people')
+        .select('budget, gas_budget')
+        .eq('id', effectiveUserId)
+        .maybeSingle(),
+    ]);
 
-    if (!error && data) {
-      setTransactions(data as BudgetTransaction[]);
+    if (!txResult.error && txResult.data) {
+      setTransactions(txResult.data as BudgetTransaction[]);
+    }
+    if (!balanceResult.error && balanceResult.data) {
+      setCurrentBalances({
+        regular: Number(balanceResult.data.budget) || 0,
+        gas: Number(balanceResult.data.gas_budget) || 0,
+      });
+    } else {
+      setCurrentBalances(null);
     }
     setLoading(false);
   };
@@ -198,8 +214,32 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
     return Array.from(months).sort().reverse();
   }, [transactions]);
 
+  const dateBounds = useMemo(() => {
+    let from: number | null = null;
+    let to: number | null = null;
+    if (selectedMonth) {
+      const [year, month] = selectedMonth.split('-').map(Number);
+      from = new Date(year, month - 1, 1).getTime();
+      to = new Date(year, month, 1).getTime() - 1;
+    }
+    if (startDate) {
+      const start = new Date(startDate + 'T00:00:00').getTime();
+      from = from === null ? start : Math.max(from, start);
+    }
+    if (endDate) {
+      const end = new Date(endDate + 'T23:59:59.999').getTime();
+      to = to === null ? end : Math.min(to, end);
+    }
+    return { from, to };
+  }, [selectedMonth, startDate, endDate]);
+
+  const periodTransactions = useMemo(() => transactions.filter(t => {
+    const time = new Date(t.created_at).getTime();
+    return (dateBounds.from === null || time >= dateBounds.from) && (dateBounds.to === null || time <= dateBounds.to);
+  }), [transactions, dateBounds]);
+
   const filteredTransactions = useMemo(() => {
-    let result = [...transactions];
+    let result = [...periodTransactions];
 
     if (selectedType !== 'all') {
       result = result.filter(t => t.type === selectedType);
@@ -207,26 +247,6 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
 
     if (selectedBudgetType !== 'all') {
       result = result.filter(t => t.budget_type === selectedBudgetType);
-    }
-
-    if (selectedMonth) {
-      const [year, month] = selectedMonth.split('-').map(Number);
-      result = result.filter(t => {
-        const d = new Date(t.created_at);
-        return d.getFullYear() === year && d.getMonth() + 1 === month;
-      });
-    }
-
-    if (startDate) {
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
-      result = result.filter(t => new Date(t.created_at) >= start);
-    }
-
-    if (endDate) {
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      result = result.filter(t => new Date(t.created_at) <= end);
     }
 
     result.sort((a, b) => {
@@ -252,21 +272,29 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
     });
 
     return result;
-  }, [transactions, selectedType, selectedBudgetType, selectedMonth, startDate, endDate, sortField, sortDir]);
+  }, [periodTransactions, selectedType, selectedBudgetType, sortField, sortDir]);
 
-  const regularSummary = useMemo(() => {
-    const regular = filteredTransactions.filter(t => t.budget_type === 'regular');
-    const totalCredits = regular.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
-    const totalDebits = regular.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
-    return { totalCredits, totalDebits, net: totalCredits - totalDebits };
-  }, [filteredTransactions]);
+  const buildSummary = (budgetType: 'regular' | 'gas') => {
+    const signed = (t: BudgetTransaction) => (t.type === 'credit' ? t.amount : -t.amount);
+    const inPeriod = periodTransactions.filter(t => t.budget_type === budgetType);
+    const totalCredits = inPeriod.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
+    const totalDebits = inPeriod.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
+    const net = totalCredits - totalDebits;
+    if (!currentBalances) return { totalCredits, totalDebits, net, startingBalance: null, endingBalance: null };
 
-  const gasSummary = useMemo(() => {
-    const gas = filteredTransactions.filter(t => t.budget_type === 'gas');
-    const totalCredits = gas.filter(t => t.type === 'credit').reduce((sum, t) => sum + t.amount, 0);
-    const totalDebits = gas.filter(t => t.type === 'debit').reduce((sum, t) => sum + t.amount, 0);
-    return { totalCredits, totalDebits, net: totalCredits - totalDebits };
-  }, [filteredTransactions]);
+    const afterPeriod = dateBounds.to === null
+      ? 0
+      : transactions
+          .filter(t => t.budget_type === budgetType && new Date(t.created_at).getTime() > dateBounds.to!)
+          .reduce((sum, t) => sum + signed(t), 0);
+    const round = (n: number) => Math.round(n * 100) / 100;
+    const endingBalance = round(currentBalances[budgetType] - afterPeriod);
+    return { totalCredits, totalDebits, net, startingBalance: round(endingBalance - net), endingBalance };
+  };
+
+  const regularSummary = useMemo(() => buildSummary('regular'), [periodTransactions, transactions, dateBounds, currentBalances]);
+  const gasSummary = useMemo(() => buildSummary('gas'), [periodTransactions, transactions, dateBounds, currentBalances]);
+  const endingLabel = dateBounds.to === null ? 'Current Budget' : 'Ending Balance';
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -336,14 +364,17 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
       });
 
       const sheet = XLSX.utils.json_to_sheet(rows);
+      const summaryRows = (label: string, s: typeof regularSummary) => [
+        [label, '', '', '', '', '', '', 'Starting Balance', s.startingBalance ?? ''],
+        ['', '', '', '', '', '', '', 'Credits', s.totalCredits],
+        ['', '', '', '', '', '', '', 'Debits', -s.totalDebits],
+        ['', '', '', '', '', '', '', 'Net Change', s.net],
+        ['', '', '', '', '', '', '', endingLabel, s.endingBalance ?? ''],
+      ];
       XLSX.utils.sheet_add_aoa(sheet, [
         [],
-        ['Regular Budget', '', '', '', '', '', '', 'Credits', regularSummary.totalCredits],
-        ['', '', '', '', '', '', '', 'Debits', -regularSummary.totalDebits],
-        ['', '', '', '', '', '', '', 'Net Change', regularSummary.net],
-        ['Gas Budget', '', '', '', '', '', '', 'Credits', gasSummary.totalCredits],
-        ['', '', '', '', '', '', '', 'Debits', -gasSummary.totalDebits],
-        ['', '', '', '', '', '', '', 'Net Change', gasSummary.net],
+        ...summaryRows('Regular Budget', regularSummary),
+        ...summaryRows('Gas Budget', gasSummary),
       ], { origin: -1 });
 
       const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
@@ -383,6 +414,54 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
       ? <ArrowUp className="w-3.5 h-3.5 text-emerald-600" />
       : <ArrowDown className="w-3.5 h-3.5 text-emerald-600" />;
   };
+
+  const renderSummary = (title: string, icon: JSX.Element, s: typeof regularSummary, spacing: string) => (
+    <div className={spacing}>
+      <div className="flex items-center gap-2 mb-2">
+        {icon}
+        <span className="text-sm font-semibold text-slate-700">{title}</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3" title="Balance before the first transaction in this period">
+          <div className="flex items-center gap-2 mb-0.5">
+            <Wallet className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Starting Balance</span>
+          </div>
+          <p className="text-lg font-bold text-slate-800">{s.startingBalance === null ? '—' : formatCurrency(s.startingBalance)}</p>
+        </div>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+          <div className="flex items-center gap-2 mb-0.5">
+            <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
+          </div>
+          <p className="text-lg font-bold text-emerald-800">{formatCurrency(s.totalCredits)}</p>
+        </div>
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+          <div className="flex items-center gap-2 mb-0.5">
+            <TrendingDown className="w-3.5 h-3.5 text-red-600" />
+            <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
+          </div>
+          <p className="text-lg font-bold text-red-800">{formatCurrency(s.totalDebits)}</p>
+        </div>
+        <div className={`border rounded-xl p-3 ${s.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
+          <div className="flex items-center gap-2 mb-0.5">
+            <Minus className={`w-3.5 h-3.5 ${s.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
+            <span className={`text-xs font-semibold uppercase tracking-wider ${s.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
+          </div>
+          <p className={`text-lg font-bold ${s.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
+            {s.net >= 0 ? '+' : ''}{formatCurrency(s.net)}
+          </p>
+        </div>
+        <div className="bg-white border-2 border-slate-800 rounded-xl p-3">
+          <div className="flex items-center gap-2 mb-0.5">
+            <Equal className="w-3.5 h-3.5 text-slate-700" />
+            <span className="text-xs font-semibold text-slate-700 uppercase tracking-wider">{endingLabel}</span>
+          </div>
+          <p className="text-lg font-bold text-slate-900">{s.endingBalance === null ? '—' : formatCurrency(s.endingBalance)}</p>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -428,71 +507,8 @@ export function BudgetTransactionLog({ onBack, targetUserId, targetUserName, adm
         </div>
       </div>
 
-      {/* Summary Bars - Regular Budget */}
-      <div className="mb-4">
-        <div className="flex items-center gap-2 mb-2">
-          <DollarSign className="w-4 h-4 text-emerald-600" />
-          <span className="text-sm font-semibold text-slate-700">Regular Budget</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-0.5">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
-            </div>
-            <p className="text-lg font-bold text-emerald-800">{formatCurrency(regularSummary.totalCredits)}</p>
-          </div>
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-0.5">
-              <TrendingDown className="w-3.5 h-3.5 text-red-600" />
-              <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
-            </div>
-            <p className="text-lg font-bold text-red-800">{formatCurrency(regularSummary.totalDebits)}</p>
-          </div>
-          <div className={`border rounded-xl p-3 ${regularSummary.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
-            <div className="flex items-center gap-2 mb-0.5">
-              <Minus className={`w-3.5 h-3.5 ${regularSummary.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
-              <span className={`text-xs font-semibold uppercase tracking-wider ${regularSummary.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
-            </div>
-            <p className={`text-lg font-bold ${regularSummary.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
-              {regularSummary.net >= 0 ? '+' : ''}{formatCurrency(regularSummary.net)}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Summary Bars - Gas Budget */}
-      <div className="mb-6">
-        <div className="flex items-center gap-2 mb-2">
-          <Fuel className="w-4 h-4 text-amber-600" />
-          <span className="text-sm font-semibold text-slate-700">Gas Budget</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-0.5">
-              <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-              <span className="text-xs font-semibold text-emerald-700 uppercase tracking-wider">Credits</span>
-            </div>
-            <p className="text-lg font-bold text-emerald-800">{formatCurrency(gasSummary.totalCredits)}</p>
-          </div>
-          <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-            <div className="flex items-center gap-2 mb-0.5">
-              <TrendingDown className="w-3.5 h-3.5 text-red-600" />
-              <span className="text-xs font-semibold text-red-700 uppercase tracking-wider">Debits</span>
-            </div>
-            <p className="text-lg font-bold text-red-800">{formatCurrency(gasSummary.totalDebits)}</p>
-          </div>
-          <div className={`border rounded-xl p-3 ${gasSummary.net >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-orange-50 border-orange-200'}`}>
-            <div className="flex items-center gap-2 mb-0.5">
-              <Minus className={`w-3.5 h-3.5 ${gasSummary.net >= 0 ? 'text-blue-600' : 'text-orange-600'}`} />
-              <span className={`text-xs font-semibold uppercase tracking-wider ${gasSummary.net >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>Net Change</span>
-            </div>
-            <p className={`text-lg font-bold ${gasSummary.net >= 0 ? 'text-blue-800' : 'text-orange-800'}`}>
-              {gasSummary.net >= 0 ? '+' : ''}{formatCurrency(gasSummary.net)}
-            </p>
-          </div>
-        </div>
-      </div>
+      {renderSummary('Regular Budget', <DollarSign className="w-4 h-4 text-emerald-600" />, regularSummary, 'mb-4')}
+      {renderSummary('Gas Budget', <Fuel className="w-4 h-4 text-amber-600" />, gasSummary, 'mb-6')}
 
       {/* Filters */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4 shadow-sm">
